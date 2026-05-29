@@ -3,7 +3,10 @@ import pool from "../config/db.js";
 
 import { ApiError } from "../utils/ApiError.js";
 
-import { generateAccessToken, generateRefreshToken } from "../utils/jwt.js";
+import {
+  generateAccessToken,
+  generateRefreshToken,
+} from "../utils/jwt.utils.js";
 
 export const registerUserService = async ({
   full_name,

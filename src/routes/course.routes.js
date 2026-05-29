@@ -41,6 +41,7 @@ courseRouter.patch(
   upload.single("thumbnail"),
   updateCourse,
 );
+
 courseRouter.delete("/:courseId", requireRole("admin"), deleteCourse);
 
 // ─── Modules ──────────────────────────────────────────────

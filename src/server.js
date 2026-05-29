@@ -9,8 +9,6 @@ const PORT = process.env.PORT || 3000;
 async function startServer() {
   try {
     console.log("Connecting to databases...");
-
-    
     await pool.query("SELECT 1");
     console.log("✅ PostgreSQL connected");
 
