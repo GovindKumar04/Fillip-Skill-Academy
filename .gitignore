@@ -6,7 +6,7 @@ node_modules/
 .env.local
 .env.development
 .env.production
-
+package-lock.json
 # Logs
 logs
 *.log
