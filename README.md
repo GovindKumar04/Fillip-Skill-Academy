@@ -1,1324 +1,617 @@
-# Fillip Skill Academy — Backend API Reference
+# Fillip Skill Academy — Backend API Documentation
 
-**Base URL:** `http://localhost:3000`  
-**Auth:** Cookie-based JWT (`accessToken` + `refreshToken`). All protected routes require the `accessToken` cookie or `Authorization: Bearer <token>` header.
+REST API for the Fillip Skill Academy platform. Handles authentication, course
+management (modules, materials, reviews), enrollments, learning progress, and the
+contact/enquiry support portal.
+
+- **Runtime:** Node.js + Express 5 (ES Modules)
+- **Databases:** PostgreSQL (users / auth) + MongoDB via Mongoose (courses, enrollments, progress, enquiries)
+- **Media storage:** Cloudinary (course thumbnails, lesson materials)
+- **Email:** Nodemailer (enquiry confirmations & replies)
 
 ---
 
 ## Table of Contents
 
-1. [Auth](#1-auth)
-2. [Courses](#2-courses)
-3. [Modules](#3-modules)
-4. [Materials](#4-materials)
-5. [Reviews & Testimonials](#5-reviews--testimonials)
-6. [Enquiries (Admin Portal)](#6-enquiries-admin-portal)
-7. [Contact (Public)](#7-contact-public)
-8. [Progress](#8-progress)
-9. [Enrollments](#9-enrollments)
-10. [Error Format](#10-error-format)
+1. [Getting Started](#getting-started)
+2. [Base URL](#base-url)
+3. [Authentication & Roles](#authentication--roles)
+4. [Standard Response Format](#standard-response-format)
+5. [Error Handling](#error-handling)
+6. [Endpoints](#endpoints)
+   - [Auth](#1-auth----auth)
+   - [Courses](#2-courses----courses)
+   - [Modules](#3-modules-nested-under-courses)
+   - [Materials](#4-materials-nested-under-modules)
+   - [Reviews & Testimonials](#5-reviews--testimonials-nested-under-courses)
+   - [Contact](#6-contact----contact)
+   - [Enquiries](#7-enquiries----enquiries-admin)
+   - [Enrollments](#8-enrollments----enrollments)
+   - [Progress](#9-progress----progress)
+7. [Data Models](#data-models)
+8. [Environment Variables](#environment-variables)
 
 ---
 
-## 1. Auth
+## Getting Started
 
-| Method | Endpoint | Auth | Role |
-|--------|----------|------|------|
-| POST | `/auth/register` | ❌ | — |
-| POST | `/auth/login` | ❌ | — |
-| POST | `/auth/logout` | ❌ | — |
-| POST | `/auth/refresh` | ❌ | — |
-| GET | `/auth/me` | ✅ | any |
-
----
-
-### POST `/auth/register`
-
-Registers a new student or instructor. Admins cannot self-register.
-
-**Request Body**
-```json
-{
-  "full_name": "Govind Kumar",
-  "email": "govind@example.com",
-  "password": "Secret@123",
-  "role": "student",
-  "phone": "9876543210",
-  "location": "Patna, Bihar"
-}
+```bash
+cd backend
+npm install
+npm start          # runs src/server.js (main entry)
 ```
 
-| Field | Type | Rules |
-|-------|------|-------|
-| `full_name` | string | 3–100 chars |
-| `email` | string | valid email |
-| `password` | string | min 6 chars |
-| `role` | string | `"student"` or `"instructor"` |
-| `phone` | string | Indian mobile — regex `^[6-9]\d{9}$` |
-| `location` | string | 2–255 chars |
+The server boots only after both databases connect:
 
-**Success `201`**
-```json
-{
-  "statusCode": 201,
-  "data": {
-    "id": "uuid",
-    "full_name": "Govind Kumar",
-    "email": "govind@example.com",
-    "role": "student",
-    "avatar": null,
-    "phone": "9876543210",
-    "location": "Patna, Bihar",
-    "created_at": "2025-01-01T00:00:00Z"
-  },
-  "message": "User registered successfully",
-  "success": true
-}
 ```
-
-**Errors**
-- `400` — Validation failed / all fields required
-- `401` — Attempt to register as admin
-- `409` — Email already exists
-
----
-
-### POST `/auth/login`
-
-**Request Body**
-```json
-{
-  "email": "govind@example.com",
-  "password": "Secret@123"
-}
-```
-
-**Success `200`** — Sets `accessToken` and `refreshToken` cookies.
-```json
-{
-  "statusCode": 200,
-  "data": {
-    "user": {
-      "id": "uuid",
-      "full_name": "Govind Kumar",
-      "email": "govind@example.com",
-      "role": "student",
-      "avatar": null,
-      "phone": "9876543210",
-      "location": "Patna, Bihar"
-    },
-    "accessToken": "<jwt>"
-  },
-  "message": "Login successful",
-  "success": true
-}
-```
-
-**Errors**
-- `400` — Validation failed
-- `401` — Invalid credentials
-- `404` — User not found
-
----
-
-### POST `/auth/logout`
-
-Clears `accessToken` and `refreshToken` cookies.
-
-**Success `200`**
-```json
-{ "statusCode": 200, "data": {}, "message": "Logout successful", "success": true }
+Connecting to databases...
+✅ PostgreSQL connected
+✅ MongoDB connected
+🚀 Server running on port 3000
 ```
 
 ---
 
-### POST `/auth/refresh`
+## Base URL
 
-Issues a new `accessToken` using the `refreshToken` cookie.
+The Express app mounts routers at the **root** path:
 
-**Success `200`** — Sets new `accessToken` cookie.
+```
+http://localhost:3000
+```
+
+> **Frontend note:** the React client calls the API through `/api/*` and the Vite
+> dev server proxies `/api` → `http://localhost:3000` (stripping the `/api` prefix).
+> So `POST /api/auth/login` from the browser hits `POST /auth/login` on the backend.
+> All paths in this document are the **backend** paths (no `/api` prefix).
+
+---
+
+## Authentication & Roles
+
+Auth uses **JWT** delivered as **httpOnly cookies** (`accessToken`, `refreshToken`).
+A `Bearer` token in the `Authorization` header is also accepted.
+
+```
+Authorization: Bearer <accessToken>
+```
+
+`verifyJWT` resolves the token (cookie first, then header) and attaches the decoded
+payload to `req.user` (`{ id, role, ... }`). `requireRole(...roles)` gates a route to
+specific roles.
+
+### Roles
+
+| Role         | Notes                                                            |
+|--------------|------------------------------------------------------------------|
+| `student`    | Default for self-registration. Learns, reviews, tracks progress. |
+| `instructor` | Self-registration allowed. Course/student oversight (scoped).    |
+| `admin`      | Full control. **Cannot self-register** — seeded/managed directly.|
+
+### Token lifecycle
+
+- **Login** sets `accessToken` + `refreshToken` cookies and returns the user + access token.
+- **`POST /auth/refresh`** issues a new access token from the `refreshToken` cookie.
+- **Logout** clears both cookies.
+
+---
+
+## Standard Response Format
+
+Every successful response uses a consistent envelope (`ApiResponse`):
+
 ```json
 {
   "statusCode": 200,
-  "data": { "accessToken": "<new_jwt>" },
-  "message": "Token refreshed",
-  "success": true
-}
-```
-
-**Errors**
-- `401` — No/invalid/expired refresh token, or token mismatch
-
----
-
-### GET `/auth/me`
-
-Returns the currently authenticated user's profile from PostgreSQL.
-
-**Success `200`**
-```json
-{
-  "statusCode": 200,
-  "data": {
-    "id": "uuid",
-    "full_name": "Govind Kumar",
-    "email": "govind@example.com",
-    "role": "student",
-    "phone": "9876543210",
-    "avatar": null,
-    "is_verified": false,
-    "is_active": true,
-    "created_at": "2025-01-01T00:00:00Z"
-  },
-  "message": "Current user fetched successfully",
-  "success": true
-}
-```
-
-**Errors**
-- `401` — Not authenticated
-- `404` — User not found
-
----
-
-## 2. Courses
-
-All course routes require authentication (`verifyJWT`). Students only see **published** courses; admins see all.
-
-| Method | Endpoint | Auth | Role |
-|--------|----------|------|------|
-| GET | `/courses` | ✅ | any |
-| POST | `/courses` | ✅ | admin |
-| GET | `/courses/:courseId` | ✅ | any |
-| PATCH | `/courses/:courseId` | ✅ | admin |
-| DELETE | `/courses/:courseId` | ✅ | admin |
-
----
-
-### GET `/courses`
-
-Returns a paginated list of courses. Students only receive published courses.
-
-**Query Params**
-
-| Param | Type | Default | Description |
-|-------|------|---------|-------------|
-| `page` | number | 1 | Page number |
-| `limit` | number | 10 | Results per page |
-| `category` | string | — | Filter by category |
-| `level` | string | — | `beginner` / `intermediate` / `advanced` |
-
-**Success `200`**
-```json
-{
-  "statusCode": 200,
-  "data": {
-    "courses": [
-      {
-        "_id": "mongo_id",
-        "title": "React Fundamentals",
-        "description": "...",
-        "thumbnail": "https://res.cloudinary.com/...",
-        "category": "Web Development",
-        "level": "beginner",
-        "price": 999,
-        "isPublished": true,
-        "averageRating": 4.5,
-        "totalReviews": 12,
-        "totalStudentsEnrolled": 45,
-        "createdAt": "2025-01-01T00:00:00Z"
-      }
-    ],
-    "total": 25,
-    "page": 1,
-    "limit": 10
-  },
+  "data": { "...": "endpoint-specific payload" },
   "message": "Success",
   "success": true
 }
 ```
 
----
-
-### POST `/courses`
-
-Creates a new course. Accepts `multipart/form-data` for an optional thumbnail.
-
-**Request** — `multipart/form-data`
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `title` | string | ✅ | Course title |
-| `description` | string | ✅ | Course description |
-| `category` | string | ✅ | e.g. `"Web Development"` |
-| `level` | string | ❌ | `beginner` / `intermediate` / `advanced` |
-| `price` | number | ❌ | Default `0` |
-| `thumbnail` | file | ❌ | jpeg / png / webp, uploaded to Cloudinary |
-
-**Success `201`**
-```json
-{
-  "statusCode": 201,
-  "data": {
-    "_id": "mongo_id",
-    "title": "React Fundamentals",
-    "isPublished": false,
-    "modules": [],
-    "reviews": [],
-    "averageRating": 0,
-    "totalReviews": 0
-  },
-  "message": "Course created successfully",
-  "success": true
-}
-```
-
-**Errors**
-- `400` — title, description, or category missing
+- `success` is `true` when `statusCode < 400`.
+- `data` holds the payload (object, array, or `null`).
 
 ---
 
-### GET `/courses/:courseId`
+## Error Handling
 
-Returns a single course with all modules and materials fully populated.
-
-**Success `200`**
-```json
-{
-  "statusCode": 200,
-  "data": {
-    "_id": "mongo_id",
-    "title": "React Fundamentals",
-    "description": "...",
-    "thumbnail": "https://res.cloudinary.com/...",
-    "benefits": ["Build real projects", "Understand hooks"],
-    "prerequisites": ["Basic HTML/CSS"],
-    "targetAudience": ["Beginners", "Frontend developers"],
-    "language": "English",
-    "modules": [
-      {
-        "_id": "mod_id",
-        "title": "Getting Started",
-        "order": 0,
-        "materials": [
-          {
-            "_id": "mat_id",
-            "title": "Intro Video",
-            "type": "video",
-            "url": "https://res.cloudinary.com/...",
-            "duration": 360,
-            "size": 104857600
-          }
-        ]
-      }
-    ],
-    "reviews": [],
-    "averageRating": 0,
-    "totalReviews": 0
-  },
-  "message": "Success",
-  "success": true
-}
-```
-
-**Errors**
-- `403` — Course is not published (non-admin users)
-- `404` — Course not found
-
----
-
-### PATCH `/courses/:courseId`
-
-Updates course details. Accepts `multipart/form-data` to replace the thumbnail.
-
-**Request** — `multipart/form-data` (all fields optional)
-
-| Field | Description |
-|-------|-------------|
-| `title` | New title |
-| `description` | New description |
-| `category` | New category |
-| `level` | New level |
-| `price` | New price |
-| `isPublished` | `true` / `false` to publish or unpublish |
-| `thumbnail` | New image — old one deleted from Cloudinary |
-
-**Success `200`** — Returns updated course object.
-
----
-
-### DELETE `/courses/:courseId`
-
-Permanently deletes the course, all its modules, all materials, and all associated Cloudinary files.
-
-**Success `200`**
-```json
-{ "statusCode": 200, "data": null, "message": "Course deleted successfully", "success": true }
-```
-
----
-
-## 3. Modules
-
-Nested under `/courses/:courseId/modules`. All require authentication.
-
-| Method | Endpoint | Auth | Role |
-|--------|----------|------|------|
-| POST | `/courses/:courseId/modules` | ✅ | admin |
-| GET | `/courses/:courseId/modules` | ✅ | any |
-| PATCH | `/courses/:courseId/modules/:moduleId` | ✅ | admin |
-| DELETE | `/courses/:courseId/modules/:moduleId` | ✅ | admin |
-
----
-
-### POST `/courses/:courseId/modules`
-
-**Request Body**
-```json
-{
-  "title": "Getting Started",
-  "description": "Introduction to the course",
-  "order": 0
-}
-```
-
-| Field | Required | Description |
-|-------|----------|-------------|
-| `title` | ✅ | Module title |
-| `description` | ❌ | Optional description |
-| `order` | ❌ | Display order (defaults to current module count) |
-
-**Success `201`** — Returns the created module object. Also appends the module ID to the course's `modules` array.
-
-**Errors**
-- `400` — Title missing
-- `404` — Course not found
-
----
-
-### GET `/courses/:courseId/modules`
-
-Returns all modules for a course with materials populated, sorted by `order` ascending.
-
-**Success `200`** — Array of module objects (same shape as populated modules in `GET /courses/:courseId`).
-
----
-
-### PATCH `/courses/:courseId/modules/:moduleId`
-
-Updates any field on the module. Uses MongoDB `$set` so only provided fields are changed.
-
-**Request Body**
-```json
-{ "title": "Updated Title", "order": 2 }
-```
-
-**Success `200`** — Returns the updated module object.
-
-**Errors**
-- `404` — Module not found in this course
-
----
-
-### DELETE `/courses/:courseId/modules/:moduleId`
-
-Deletes the module, all its materials, all associated Cloudinary files, and removes the module reference from the course.
-
-**Success `200`**
-```json
-{ "statusCode": 200, "data": null, "message": "Module deleted successfully", "success": true }
-```
-
----
-
-## 4. Materials
-
-Nested under `/courses/:courseId/modules/:moduleId/materials`. Admin only.
-
-| Method | Endpoint | Auth | Role |
-|--------|----------|------|------|
-| POST | `/courses/:courseId/modules/:moduleId/materials` | ✅ | admin |
-| DELETE | `/courses/:courseId/modules/:moduleId/materials/:materialId` | ✅ | admin |
-
----
-
-### POST `.../materials`
-
-Uploads up to **10 files** in one request. Files are stored on Cloudinary; temp files are deleted after upload.
-
-**Request** — `multipart/form-data`
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `files` | file[] | ✅ | Max 10 files, max 500 MB each |
-| `titles` | string | ❌ | JSON array or comma-separated titles, e.g. `["Intro","Notes"]` |
-
-**Supported MIME types**
-
-| Type | Detected as |
-|------|-------------|
-| `video/mp4`, `video/mkv`, `video/webm` | `video` |
-| `application/pdf` | `pdf` |
-| `image/jpeg`, `image/png`, `image/webp` | `image` |
-
-**Success `201`**
-```json
-{
-  "statusCode": 201,
-  "data": [
-    {
-      "_id": "mat_id",
-      "title": "Intro Video",
-      "type": "video",
-      "url": "https://res.cloudinary.com/...",
-      "publicId": "courses/courseId/modules/moduleId/intro",
-      "duration": 420,
-      "size": 52428800,
-      "order": 0,
-      "module": "mod_id"
-    }
-  ],
-  "message": "2 material(s) uploaded successfully",
-  "success": true
-}
-```
-
-**Errors**
-- `400` — No files uploaded / unsupported file type
-- `404` — Module not found in this course
-
----
-
-### DELETE `.../materials/:materialId`
-
-Deletes the material file from Cloudinary, removes it from the module's `materials` array, and deletes the MongoDB document.
-
-**Success `200`**
-```json
-{ "statusCode": 200, "data": null, "message": "Material deleted successfully", "success": true }
-```
-
----
-
-## 5. Reviews & Testimonials
-
-Embedded reviews on courses. Stored inside the `Course` document (one review per enrolled student per course). All routes require authentication.
-
-| Method | Endpoint | Auth | Role |
-|--------|----------|------|------|
-| GET | `/courses/:courseId/reviews` | ✅ | any |
-| GET | `/courses/:courseId/reviews/testimonials` | ✅ | any |
-| POST | `/courses/:courseId/reviews` | ✅ | student (enrolled) |
-| DELETE | `/courses/:courseId/reviews` | ✅ | student (own) / admin (any) |
-| PATCH | `/courses/:courseId/reviews/featured` | ✅ | admin |
-
----
-
-### GET `/courses/:courseId/reviews`
-
-Paginated reviews with user details joined from PostgreSQL.
-
-**Query Params**
-
-| Param | Default | Description |
-|-------|---------|-------------|
-| `page` | 1 | Page number |
-| `limit` | 10 | Results per page |
-
-**Success `200`**
-```json
-{
-  "statusCode": 200,
-  "data": {
-    "reviews": [
-      {
-        "userId": "pg_uuid",
-        "rating": 5,
-        "comment": "Excellent course!",
-        "isFeatured": true,
-        "createdAt": "2025-01-01T00:00:00Z",
-        "user": { "id": "pg_uuid", "full_name": "Govind Kumar", "avatar": null }
-      }
-    ],
-    "total": 12,
-    "averageRating": 4.5,
-    "page": 1,
-    "limit": 10
-  },
-  "message": "Success",
-  "success": true
-}
-```
-
----
-
-### GET `/courses/:courseId/reviews/testimonials`
-
-Returns only reviews where `isFeatured: true`. Used on the public course page.
-
-**Success `200`** — Array of featured review objects with `user` field attached (same shape as above).
-
----
-
-### POST `/courses/:courseId/reviews`
-
-Enrolled student adds or updates their review. Posting again updates the existing review. `averageRating` and `totalReviews` on the course are recalculated automatically.
-
-**Request Body**
-```json
-{
-  "rating": 5,
-  "comment": "Really well structured course!"
-}
-```
-
-| Field | Required | Rules |
-|-------|----------|-------|
-| `rating` | ✅ | Integer 1–5 |
-| `comment` | ❌ | Optional text |
-
-**Success `200`**
-```json
-{
-  "statusCode": 200,
-  "data": { "averageRating": 4.5, "totalReviews": 13 },
-  "message": "Review added",
-  "success": true
-}
-```
-
-**Errors**
-- `400` — Invalid rating
-- `403` — Student not enrolled in this course
-
----
-
-### DELETE `/courses/:courseId/reviews`
-
-Student deletes their own review. Admin can delete any review by passing `?userId=<uuid>`.
-
-**Query Params (admin only)**
-
-| Param | Description |
-|-------|-------------|
-| `userId` | UUID of the user whose review to delete |
-
-**Success `200`**
-```json
-{ "statusCode": 200, "data": null, "message": "Review deleted", "success": true }
-```
-
----
-
-### PATCH `/courses/:courseId/reviews/featured`
-
-Admin toggles whether a review is shown as a testimonial (`isFeatured`).
-
-**Request Body**
-```json
-{
-  "userId": "pg_uuid_of_reviewer",
-  "isFeatured": true
-}
-```
-
-| Field | Required | Description |
-|-------|----------|-------------|
-| `userId` | ✅ | PG UUID of the reviewer |
-| `isFeatured` | ❌ | `true` / `false`. Omit to toggle current value. |
-
-**Success `200`** — Returns the updated review object with `message: "Review marked as testimonial"` or `"Review removed from testimonials"`.
-
----
-
-## 6. Enquiries (Admin Portal)
-
-All routes require admin authentication (`verifyJWT` + `requireRole("admin")`).
-
-| Method | Endpoint | Auth | Role |
-|--------|----------|------|------|
-| GET | `/enquiries` | ✅ | admin |
-| GET | `/enquiries/stats` | ✅ | admin |
-| GET | `/enquiries/:id` | ✅ | admin |
-| POST | `/enquiries/:id/reply` | ✅ | admin |
-| PATCH | `/enquiries/:id/status` | ✅ | admin |
-
----
-
-### GET `/enquiries`
-
-Filtered, paginated list of all enquiries. Reply history is excluded for performance (use `GET /enquiries/:id` to see replies).
-
-**Query Params**
-
-| Param | Description |
-|-------|-------------|
-| `page` | Page number (default: `1`) |
-| `limit` | Results per page (default: `10`) |
-| `status` | `open` / `contacted` / `resolved` |
-| `priority` | `low` / `medium` / `high` |
-| `role` | `student` / `instructor` / `guest` |
-| `category` | e.g. `general`, `courses`, `technical`, `billing`, `other` |
-| `search` | Searches `name`, `email`, `subject`, `ticketId` (case-insensitive regex) |
-
-**Success `200`**
-```json
-{
-  "statusCode": 200,
-  "data": {
-    "enquiries": [
-      {
-        "_id": "mongo_id",
-        "ticketId": "TKT-2025-0001",
-        "name": "Govind Kumar",
-        "email": "govind@example.com",
-        "phone": "9876543210",
-        "subject": "Course access issue",
-        "message": "I cannot access module 3...",
-        "role": "student",
-        "status": "open",
-        "priority": "medium",
-        "category": "technical",
-        "createdAt": "2025-01-01T00:00:00Z"
-      }
-    ],
-    "total": 48,
-    "page": 1,
-    "limit": 10
-  },
-  "message": "Success",
-  "success": true
-}
-```
-
----
-
-### GET `/enquiries/stats`
-
-Dashboard stats for the enquiry portal including counts by status, role, category, and average response time.
-
-**Success `200`**
-```json
-{
-  "statusCode": 200,
-  "data": {
-    "total": 48,
-    "byStatus":   { "open": 12, "contacted": 20, "resolved": 16 },
-    "byRole":     { "student": 30, "instructor": 8, "guest": 10 },
-    "byCategory": { "general": 15, "technical": 20, "courses": 13 },
-    "avgResponseTime": "3.2 hours"
-  },
-  "message": "Success",
-  "success": true
-}
-```
-
-`avgResponseTime` is calculated only from resolved enquiries that have a `respondedAt` timestamp. Returns `null` if no resolved enquiries exist.
-
----
-
-### GET `/enquiries/:id`
-
-Returns a single enquiry with full reply history and pre-built contact action links.
-
-**Success `200`**
-```json
-{
-  "statusCode": 200,
-  "data": {
-    "enquiry": {
-      "_id": "mongo_id",
-      "ticketId": "TKT-2025-0001",
-      "name": "Govind Kumar",
-      "email": "govind@example.com",
-      "phone": "9876543210",
-      "subject": "Course access issue",
-      "message": "I cannot access module 3...",
-      "role": "student",
-      "status": "contacted",
-      "priority": "medium",
-      "category": "technical",
-      "adminNote": "Checked DB — permissions were missing.",
-      "respondedAt": "2025-01-01T11:00:00Z",
-      "replies": [
-        { "message": "I can't access module 3.", "sentBy": "user",  "sentAt": "2025-01-01T10:00:00Z" },
-        { "message": "We've fixed it for you.", "sentBy": "admin", "sentAt": "2025-01-01T11:00:00Z" }
-      ]
-    },
-    "contactLinks": {
-      "callLink":      "tel:+919876543210",
-      "whatsappLink":  "https://wa.me/919876543210?text=Hi+Govind...",
-      "mailLink":      "mailto:govind@example.com?subject=Re:+%5BTKT-2025-0001%5D+Course+access+issue"
-    }
-  },
-  "message": "Success",
-  "success": true
-}
-```
-
----
-
-### POST `/enquiries/:id/reply`
-
-Admin replies to an enquiry. Saves the reply in the DB, sets status to `contacted`, sets `respondedAt` if not already set, and dispatches a reply email to the user.
-
-**Request Body**
-```json
-{ "message": "Hi Govind, we have resolved your issue. Please try again." }
-```
-
-**Success `200`** — Returns the updated enquiry object (with new reply appended).
-
-**Errors**
-- `400` — Message is empty / enquiry is already `resolved`
-- `404` — Enquiry not found
-
----
-
-### PATCH `/enquiries/:id/status`
-
-Updates status, priority, and/or admin note. All fields are optional.
-
-**Request Body**
-```json
-{
-  "status":    "resolved",
-  "priority":  "high",
-  "adminNote": "Escalated to dev team on 2025-01-05."
-}
-```
-
-Setting `status` to `resolved` also sets `respondedAt` if not already set.
-
-**Success `200`** — Returns the updated enquiry object.
-
----
-
-## 7. Contact (Public)
-
-These routes use `optionalAuth` — guests (no token) and logged-in users are both accepted. Admins are blocked.
-
-| Method | Endpoint | Auth | Description |
-|--------|----------|------|-------------|
-| GET | `/contact/info` | optional | Get contact details + WhatsApp deep link |
-| POST | `/contact/enquiry` | optional | Submit an enquiry (creates ticket + sends confirmation email) |
-
----
-
-### GET `/contact/info`
-
-Returns phone, email, and a WhatsApp link. The WhatsApp number and pre-filled message are personalised based on who is calling:
-
-| Caller | WhatsApp number used |
-|--------|----------------------|
-| Guest / not logged in | `WHATSAPP_GUEST` |
-| Student (not enrolled in any course) | `WHATSAPP_GUEST` |
-| Student (enrolled in at least one course) | `WHATSAPP_ENROLLED` |
-| Instructor | `WHATSAPP_INSTRUCTOR` |
-
-**Errors**
-- `403` — Admin users are blocked (they use the enquiry portal at `/enquiries`)
-
-**Success `200`**
-```json
-{
-  "statusCode": 200,
-  "data": {
-    "phone": {
-      "number": "+916280381723",
-      "label": "Call Admin Directly",
-      "link": "tel:+916280381723"
-    },
-    "email": {
-      "address": "admin@filliptechnologies.com",
-      "label": "Email Us",
-      "link": "mailto:admin@filliptechnologies.com"
-    },
-    "whatsapp": {
-      "number": "+916280381723",
-      "type": "Guest Support",
-      "prefilledMessage": "Hi! I am interested in Fillip Skill Academy courses.",
-      "link": "https://wa.me/916280381723?text=Hi%21+I+am+interested..."
-    }
-  },
-  "message": "Success",
-  "success": true
-}
-```
-
----
-
-### POST `/contact/enquiry`
-
-Submits a new enquiry. Creates a MongoDB document with a unique `ticketId`, and sends a confirmation email to the user.
-
-**Request Body**
-
-| Field | Type | Required | Notes |
-|-------|------|----------|-------|
-| `subject` | string | ✅ | Enquiry subject line |
-| `message` | string | ✅ | Full enquiry body |
-| `name` | string | ❌* | Required for guests |
-| `email` | string | ❌* | Required for guests |
-| `phone` | string | ❌ | Optional contact number |
-| `category` | string | ❌ | `general` / `courses` / `technical` / `billing` / `other` (default: `general`) |
-
-*Logged-in users: `name`, `email`, `phone`, and `role` are auto-filled from the JWT.
-
-**Success `200`**
-```json
-{
-  "statusCode": 200,
-  "data": { "ticketId": "TKT-2025-0042" },
-  "message": "Enquiry submitted! Your ticket ID is TKT-2025-0042. We will get back to you within 24 hours.",
-  "success": true
-}
-```
-
-**Errors**
-- `400` — Subject or message missing; guest missing name or email
-- `403` — Admin users cannot submit enquiries
-
----
-
-## 8. Progress
-
-Tracks per-student, per-course material completion. All routes require authentication.
-
-| Method | Endpoint | Auth | Role |
-|--------|----------|------|------|
-| POST | `/progress/mark-watched` | ✅ | student |
-| GET | `/progress/my-progress/:courseId` | ✅ | student |
-| GET | `/progress/course/:courseId` | ✅ | admin / instructor |
-| GET | `/progress/student/:userId` | ✅ | admin |
-| GET | `/progress/overview` | ✅ | admin |
-
----
-
-### POST `/progress/mark-watched`
-
-Marks a material as completed. `completionPercent` is recalculated. If called again on a fully-watched material, only `watchPercent` is updated (no duplicate entries).
-
-**Request Body**
-```json
-{
-  "courseId":    "mongo_course_id",
-  "materialId":  "mongo_material_id",
-  "watchPercent": 100
-}
-```
-
-| Field | Required | Description |
-|-------|----------|-------------|
-| `courseId` | ✅ | MongoDB ObjectId of the course |
-| `materialId` | ✅ | MongoDB ObjectId of the material |
-| `watchPercent` | ❌ | 0–100, default `100`. For videos: percentage watched. |
-
-**Success `200`**
-```json
-{
-  "statusCode": 200,
-  "data": {
-    "completionPercent": 45,
-    "completedAt": null,
-    "totalMaterials": 20,
-    "completedMaterials": 9
-  },
-  "message": "Progress updated",
-  "success": true
-}
-```
-
-`completedAt` is set automatically when `completionPercent` reaches `100`.
-
-**Errors**
-- `400` — `courseId` or `materialId` missing
-- `403` — Student not enrolled in this course
-
----
-
-### GET `/progress/my-progress/:courseId`
-
-Detailed progress breakdown by module for the authenticated student.
-
-**Success `200`**
-```json
-{
-  "statusCode": 200,
-  "data": {
-    "courseId": "mongo_id",
-    "courseTitle": "React Fundamentals",
-    "completionPercent": 45,
-    "lastAccessedAt": "2025-01-05T10:00:00Z",
-    "completedAt": null,
-    "enrolledAt": "2025-01-01T00:00:00Z",
-    "moduleBreakdown": [
-      {
-        "moduleId": "mod_id",
-        "moduleTitle": "Getting Started",
-        "totalMaterials": 4,
-        "completedMaterials": 4,
-        "modulePercent": 100,
-        "materials": [
-          {
-            "materialId": "mat_id",
-            "title": "Intro Video",
-            "type": "video",
-            "duration": 360,
-            "isCompleted": true
-          }
-        ]
-      }
-    ]
-  },
-  "message": "Success",
-  "success": true
-}
-```
-
-**Errors**
-- `403` — Student not enrolled
-- `404` — Course not found
-
----
-
-### GET `/progress/course/:courseId`
-
-Admin or assigned instructor views all students' progress in a course.
-
-**Query Params**
-
-| Param | Default |
-|-------|---------|
-| `page` | 1 |
-| `limit` | 20 |
-
-**Success `200`**
-```json
-{
-  "statusCode": 200,
-  "data": {
-    "courseTitle": "React Fundamentals",
-    "totalMaterials": 20,
-    "summary": {
-      "totalEnrolled": 45,
-      "avgCompletionPercent": 62,
-      "fullyCompleted": 12,
-      "inProgress": 33
-    },
-    "students": [
-      {
-        "userId": "pg_uuid",
-        "user": { "id": "pg_uuid", "full_name": "Govind Kumar", "email": "g@g.com", "avatar": null },
-        "completionPercent": 100,
-        "completedMaterials": 20,
-        "totalMaterials": 20,
-        "lastAccessedAt": "2025-01-10T00:00:00Z",
-        "completedAt": "2025-01-10T00:00:00Z"
-      }
-    ],
-    "page": 1,
-    "limit": 20,
-    "total": 45
-  },
-  "message": "Success",
-  "success": true
-}
-```
-
-**Errors**
-- `403` — Instructor trying to access another instructor's course
-- `404` — Course not found
-
----
-
-### GET `/progress/student/:userId`
-
-Admin views all course progress for a specific student.
-
-**Path Param:** `userId` — PostgreSQL user ID
-
-**Success `200`**
-```json
-{
-  "statusCode": 200,
-  "data": [
-    {
-      "courseId": "mongo_id",
-      "courseTitle": "React Fundamentals",
-      "courseThumbnail": "https://res.cloudinary.com/...",
-      "category": "Web Development",
-      "completionPercent": 80,
-      "lastAccessedAt": "2025-01-10T00:00:00Z",
-      "completedAt": null,
-      "enrolledAt": "2025-01-01T00:00:00Z"
-    }
-  ],
-  "message": "Success",
-  "success": true
-}
-```
-
----
-
-### GET `/progress/overview`
-
-Platform-wide aggregated progress stats per course, sorted by total students descending.
-
-**Success `200`**
-```json
-{
-  "statusCode": 200,
-  "data": [
-    {
-      "courseId": "mongo_id",
-      "courseTitle": "React Fundamentals",
-      "totalStudents": 45,
-      "avgCompletion": 62.3,
-      "completed": 12,
-      "neverStarted": 5,
-      "completionRate": 26.7
-    }
-  ],
-  "message": "Success",
-  "success": true
-}
-```
-
----
-
-## 9. Enrollments
-
-Admin manages which students are enrolled in which courses. Students read their own enrollments.
-
-| Method | Endpoint | Auth | Role |
-|--------|----------|------|------|
-| GET | `/enrollments/my-courses` | ✅ | student |
-| POST | `/enrollments` | ✅ | admin |
-| DELETE | `/enrollments/:enrollmentId` | ✅ | admin |
-| GET | `/enrollments/course/:courseId/students` | ✅ | admin / instructor |
-| GET | `/enrollments/student/:userId` | ✅ | admin |
-
----
-
-### GET `/enrollments/my-courses`
-
-Returns all active enrollments for the authenticated student with course details and progress summaries.
-
-**Success `200`**
-```json
-{
-  "statusCode": 200,
-  "data": [
-    {
-      "enrollmentId": "mongo_id",
-      "enrolledAt": "2025-01-01T00:00:00Z",
-      "course": {
-        "_id": "mongo_id",
-        "title": "React Fundamentals",
-        "description": "...",
-        "thumbnail": "https://res.cloudinary.com/...",
-        "category": "Web Development",
-        "level": "beginner",
-        "price": 999
-      },
-      "progress": {
-        "completionPercent": 45,
-        "lastAccessedAt": "2025-01-05T10:00:00Z"
-      }
-    }
-  ],
-  "message": "Success",
-  "success": true
-}
-```
-
----
-
-### POST `/enrollments`
-
-Admin enrolls a student in a course. Also creates an empty Progress document for them. If the student was previously unenrolled, re-activates the enrollment instead of creating a new one.
-
-**Request Body**
-```json
-{
-  "userId":   "pg_user_id",
-  "courseId": "mongo_course_id"
-}
-```
-
-**Success `201`** — New enrollment created.  
-**Success `200`** — Existing enrollment re-activated.
-
-**Errors**
-- `400` — Missing fields; user is not a student
-- `404` — User or course not found
-- `409` — Student already actively enrolled
-
----
-
-### DELETE `/enrollments/:enrollmentId`
-
-Soft-deletes an enrollment (`isActive: false`, records `unenrolledAt`). Progress history is preserved.
-
-**Success `200`** — Returns the updated enrollment document.
-
-**Errors**
-- `400` — Student is already unenrolled
-- `404` — Enrollment not found
-
----
-
-### GET `/enrollments/course/:courseId/students`
-
-Admin or instructor views all actively enrolled students in a course, with user info from PostgreSQL and progress from MongoDB.
-
-**Query Params**
-
-| Param | Default |
-|-------|---------|
-| `page` | 1 |
-| `limit` | 20 |
-
-**Success `200`**
-```json
-{
-  "statusCode": 200,
-  "data": {
-    "students": [
-      {
-        "enrollmentId": "mongo_id",
-        "enrolledAt": "2025-01-01T00:00:00Z",
-        "user": {
-          "id": "pg_uuid",
-          "full_name": "Govind Kumar",
-          "email": "govind@example.com",
-          "phone": "9876543210",
-          "avatar": null
-        },
-        "progress": {
-          "completionPercent": 45,
-          "lastAccessedAt": "2025-01-05T10:00:00Z",
-          "completedAt": null
-        }
-      }
-    ],
-    "total": 45,
-    "page": 1,
-    "limit": 20
-  },
-  "message": "Success",
-  "success": true
-}
-```
-
-**Errors**
-- `403` — Instructor trying to view another instructor's course students
-- `404` — Course not found
-
----
-
-### GET `/enrollments/student/:userId`
-
-Admin views all active course enrollments for a specific student with course details and progress.
-
-**Success `200`**
-```json
-{
-  "statusCode": 200,
-  "data": [
-    {
-      "enrollmentId": "mongo_id",
-      "enrolledAt": "2025-01-01T00:00:00Z",
-      "course": {
-        "_id": "mongo_id",
-        "title": "React Fundamentals",
-        "thumbnail": "https://res.cloudinary.com/...",
-        "category": "Web Development",
-        "level": "beginner"
-      },
-      "progress": {
-        "completionPercent": 45,
-        "lastAccessedAt": "2025-01-05T10:00:00Z"
-      }
-    }
-  ],
-  "message": "Success",
-  "success": true
-}
-```
-
----
-
-## 10. Error Format
-
-All errors follow a consistent shape:
+A global error handler returns (`ApiError`):
 
 ```json
 {
   "success": false,
   "statusCode": 400,
-  "message": "Validation failed",
-  "errors": [
-    { "field": "email", "message": "Invalid email" }
-  ]
+  "message": "title, description, and category are required",
+  "errors": [],
+  "stack": "...(only when NODE_ENV !== 'production')"
 }
 ```
 
-In development (`NODE_ENV !== "production"`), a `stack` trace field is also included.
+| Status | Meaning                                            |
+|--------|----------------------------------------------------|
+| 400    | Bad request / validation failure                   |
+| 401    | Missing/invalid token, refresh failure             |
+| 403    | Authenticated but not allowed (wrong role / scope) |
+| 404    | Resource not found                                 |
+| 409    | Conflict (e.g. duplicate enrollment)               |
+| 500    | Server error                                       |
 
-### Common HTTP Status Codes
+---
 
-| Code | Meaning |
-|------|---------|
-| `200` | OK |
-| `201` | Created |
-| `400` | Bad Request — missing or invalid input |
-| `401` | Unauthorized — not logged in or invalid token |
-| `403` | Forbidden — insufficient role or ownership |
-| `404` | Not Found |
-| `409` | Conflict — duplicate resource |
-| `500` | Internal Server Error |
+## Endpoints
+
+**Auth legend:** 🔓 public · 🔑 any logged-in user · 👤 student · 🎓 instructor · 🛡️ admin
+*(🔓➕ = optional auth — works for guests, behavior adapts if logged in)*
+
+---
+
+### 1. Auth — `/auth`
+
+| Method | Path             | Auth | Description                          |
+|--------|------------------|------|--------------------------------------|
+| POST   | `/auth/register` | 🔓   | Register a student or instructor     |
+| POST   | `/auth/login`    | 🔓   | Log in, sets auth cookies            |
+| POST   | `/auth/logout`   | 🔓   | Clear auth cookies                   |
+| POST   | `/auth/refresh`  | 🔓   | Issue a new access token from cookie |
+| GET    | `/auth/me`       | 🔑   | Get the current authenticated user   |
+
+#### POST `/auth/register`
+
+Validated with Zod. `role` must be `student` or `instructor` (admin is rejected).
+
+**Body**
+```json
+{
+  "full_name": "Jane Doe",          // min 3, max 100 chars
+  "email": "jane@example.com",       // valid email
+  "password": "secret123",           // min 6 chars
+  "role": "student",                 // "student" | "instructor"
+  "phone": "9876543210",             // Indian mobile: ^[6-9]\d{9}$
+  "location": "Patna, Bihar"         // 2–255 chars
+}
+```
+
+**201**
+```json
+{ "statusCode": 201, "data": { "id": 12, "full_name": "Jane Doe", "email": "jane@example.com", "role": "student" }, "message": "User registered successfully", "success": true }
+```
+
+#### POST `/auth/login`
+
+**Body**
+```json
+{ "email": "jane@example.com", "password": "secret123" }
+```
+
+**200** — also sets `accessToken` & `refreshToken` cookies.
+```json
+{ "statusCode": 200, "data": { "user": { "id": 12, "role": "student", "...": "..." }, "accessToken": "<jwt>" }, "message": "Login successful", "success": true }
+```
+
+#### POST `/auth/logout`
+Clears cookies. **200** `{ "data": {}, "message": "Logout successful" }`
+
+#### POST `/auth/refresh`
+Reads `refreshToken` cookie, validates against the stored token, issues a new `accessToken` cookie. **200** `{ "data": { "accessToken": "<jwt>" } }`
+
+#### GET `/auth/me` 🔑
+**200** — current user from PostgreSQL.
+```json
+{ "statusCode": 200, "data": { "id": 12, "full_name": "Jane Doe", "email": "jane@example.com", "role": "student", "phone": "9876543210", "avatar": null, "is_verified": false, "is_active": true, "created_at": "2026-06-01T..." }, "message": "Current user fetched successfully", "success": true }
+```
+
+---
+
+### 2. Courses — `/courses`
+
+> ⚠️ The entire course router is behind `verifyJWT` — **all course endpoints require a logged-in user.** Non-admins only ever see published courses.
+
+| Method | Path                 | Auth  | Description                               |
+|--------|----------------------|-------|-------------------------------------------|
+| POST   | `/courses`           | 🛡️    | Create a course (optional thumbnail)      |
+| GET    | `/courses`           | 🔑    | List courses (published only for non-admin)|
+| GET    | `/courses/:courseId` | 🔑    | Get one course with modules & materials   |
+| PATCH  | `/courses/:courseId` | 🛡️    | Update a course (optional new thumbnail)  |
+| DELETE | `/courses/:courseId` | 🛡️    | Delete course + its modules/materials     |
+
+#### POST `/courses` 🛡️
+`multipart/form-data` (so the optional thumbnail file can be attached).
+
+**Fields**
+| Field        | Type   | Required | Notes                                   |
+|--------------|--------|----------|-----------------------------------------|
+| `title`      | string | ✅       |                                         |
+| `description`| string | ✅       |                                         |
+| `category`   | string | ✅       |                                         |
+| `level`      | string | ❌       | `beginner`\|`intermediate`\|`advanced`  |
+| `price`      | number | ❌       | defaults `0`                            |
+| `thumbnail`  | file   | ❌       | image, field name `thumbnail`           |
+
+**201** → created course document.
+
+#### GET `/courses` 🔑
+**Query:** `page` (default 1), `limit` (default 10), `search` (matches title/category/description, case-insensitive). Non-admins are forced to `isPublished: true`. Module list is excluded from this view.
+
+**200**
+```json
+{ "statusCode": 200, "data": { "courses": [ { "_id": "...", "title": "Full-Stack Dev", "category": "Development", "level": "intermediate", "price": 0, "isPublished": true } ], "total": 1, "page": 1, "limit": 10 }, "message": "Success", "success": true }
+```
+
+#### GET `/courses/:courseId` 🔑
+Returns the course with `modules` populated, each with their `materials`. Non-admins get **403** if the course is not published.
+
+#### PATCH `/courses/:courseId` 🛡️
+`multipart/form-data`. Updatable fields: `title`, `description`, `category`, `level`, `price`, `isPublished`. Send a new `thumbnail` file to replace the image (old one is removed from Cloudinary).
+
+#### DELETE `/courses/:courseId` 🛡️
+Cascades — deletes all modules, their materials, and the Cloudinary assets. **200** `{ "data": null, "message": "Course deleted successfully" }`
+
+---
+
+### 3. Modules (nested under courses)
+
+| Method | Path                                    | Auth | Description            |
+|--------|-----------------------------------------|------|------------------------|
+| POST   | `/courses/:courseId/modules`            | 🛡️   | Add a module           |
+| GET    | `/courses/:courseId/modules`            | 🔑   | List modules + materials|
+| PATCH  | `/courses/:courseId/modules/:moduleId`  | 🛡️   | Update a module        |
+| DELETE | `/courses/:courseId/modules/:moduleId`  | 🛡️   | Delete module + materials|
+
+#### POST `/courses/:courseId/modules` 🛡️
+**Body**
+```json
+{ "title": "Introduction", "description": "Course overview", "order": 0 }
+```
+`title` required; `order` defaults to the current module count. **201** → module.
+
+#### GET `/courses/:courseId/modules` 🔑
+**200** → array of modules (sorted by `order`) with `materials` populated.
+
+#### PATCH `/courses/:courseId/modules/:moduleId` 🛡️
+**Body** — any module fields (`title`, `description`, `order`). **200** → updated module.
+
+#### DELETE `/courses/:courseId/modules/:moduleId` 🛡️
+Removes the module, its materials, and the Cloudinary files. **200** `{ "data": null }`
+
+---
+
+### 4. Materials (nested under modules)
+
+| Method | Path                                                                | Auth | Description                |
+|--------|---------------------------------------------------------------------|------|----------------------------|
+| POST   | `/courses/:courseId/modules/:moduleId/materials`                    | 🛡️   | Upload up to 10 files      |
+| DELETE | `/courses/:courseId/modules/:moduleId/materials/:materialId`        | 🛡️   | Delete a material          |
+
+#### POST `.../materials` 🛡️
+`multipart/form-data`. Field name **`files`** (max 10). Supported types: **video**, **pdf**, **image** (inferred from MIME type).
+
+**Optional titles:** send a `titles` field as a JSON array string (`'["Intro","Notes"]'`) or a comma-separated list. Each title maps to the file at the same index; falls back to the original filename.
+
+**201**
+```json
+{ "statusCode": 201, "data": [ { "_id": "...", "title": "Intro", "type": "video", "url": "https://res.cloudinary.com/...", "duration": 312, "size": 10485760 } ], "message": "1 material(s) uploaded successfully", "success": true }
+```
+
+#### DELETE `.../materials/:materialId` 🛡️
+Removes the Cloudinary asset and the DB record. **200** `{ "data": null }`
+
+---
+
+### 5. Reviews & Testimonials (nested under courses)
+
+| Method | Path                                       | Auth | Description                              |
+|--------|--------------------------------------------|------|------------------------------------------|
+| GET    | `/courses/:courseId/reviews`               | 🔑   | Paginated reviews + average rating       |
+| GET    | `/courses/:courseId/reviews/testimonials`  | 🔑   | Featured reviews only                    |
+| POST   | `/courses/:courseId/reviews`               | 👤   | Add/update own review (must be enrolled) |
+| DELETE | `/courses/:courseId/reviews`               | 🔑   | Delete own review (admin: any via query) |
+| PATCH  | `/courses/:courseId/reviews/featured`      | 🛡️   | Toggle a review's testimonial flag       |
+
+#### GET `/courses/:courseId/reviews` 🔑
+**Query:** `page` (1), `limit` (10). **200**
+```json
+{ "statusCode": 200, "data": { "reviews": [ { "userId": "uuid", "rating": 5, "comment": "Great!", "isFeatured": false, "createdAt": "...", "user": { "id": "uuid", "full_name": "Jane", "avatar": null } } ], "total": 1, "averageRating": 5, "page": 1, "limit": 10 }, "success": true }
+```
+
+#### POST `/courses/:courseId/reviews` 👤
+Caller must have an active enrollment. One review per user per course (re-posting updates it).
+**Body** `{ "rating": 5, "comment": "Loved it" }` — `rating` 1–5 required.
+**200** `{ "data": { "averageRating": 4.8, "totalReviews": 12 }, "message": "Review added" }`
+
+#### DELETE `/courses/:courseId/reviews` 🔑
+Deletes the caller's own review. **Admin** may delete anyone's by passing `?userId=<id>`. **200** `{ "data": null, "message": "Review deleted" }`
+
+#### PATCH `/courses/:courseId/reviews/featured` 🛡️
+**Body** `{ "userId": "uuid", "isFeatured": true }` — `userId` required; omit `isFeatured` to toggle. **200** → updated review.
+
+---
+
+### 6. Contact — `/contact`
+
+Public-facing support entry point. Uses **optional auth** — works for guests, and tailors output for logged-in users.
+
+| Method | Path               | Auth   | Description                                   |
+|--------|--------------------|--------|-----------------------------------------------|
+| GET    | `/contact/info`    | 🔓➕   | Phone/email/WhatsApp contact details          |
+| POST   | `/contact/enquiry` | 🔓➕   | Submit an enquiry (creates a support ticket)  |
+
+> Admins are blocked from both (they use the enquiry portal instead → **403**).
+
+#### GET `/contact/info` 🔓➕
+WhatsApp routing adapts to the caller (guest / instructor / enrolled student / guest student).
+**200**
+```json
+{ "statusCode": 200, "data": { "phone": { "number": "+91...", "label": "Call Admin Directly", "link": "tel:+91..." }, "email": { "address": "admin@...", "label": "Email Us", "link": "mailto:admin@..." }, "whatsapp": { "number": "+91...", "type": "Guest Support", "prefilledMessage": "Hi! I am interested...", "link": "https://wa.me/..." } }, "success": true }
+```
+
+#### POST `/contact/enquiry` 🔓➕
+Saves a ticket to MongoDB and emails a confirmation.
+**Body**
+```json
+{
+  "subject": "Course question",     // required
+  "message": "How long is access?", // required
+  "name": "Guest User",             // required for guests (auto-filled if logged in)
+  "email": "guest@example.com",     // required for guests (auto-filled if logged in)
+  "phone": "9876543210",            // optional
+  "category": "general"             // optional: course_issue|payment|general|technical
+}
+```
+**200**
+```json
+{ "statusCode": 200, "data": { "ticketId": "TKT-0001" }, "message": "Enquiry submitted! Your ticket ID is TKT-0001. We will get back to you within 24 hours.", "success": true }
+```
+
+---
+
+### 7. Enquiries — `/enquiries` (admin)
+
+> Entire router is `verifyJWT` + `requireRole("admin")`. **All endpoints are admin-only.**
+
+| Method | Path                      | Auth | Description                              |
+|--------|---------------------------|------|------------------------------------------|
+| GET    | `/enquiries`              | 🛡️   | List enquiries (filters + pagination)    |
+| GET    | `/enquiries/stats`        | 🛡️   | Dashboard counts & avg response time     |
+| GET    | `/enquiries/:id`          | 🛡️   | One enquiry + reply history + links      |
+| POST   | `/enquiries/:id/reply`    | 🛡️   | Reply (emails the user, marks contacted) |
+| PATCH  | `/enquiries/:id/status`   | 🛡️   | Update status / priority / admin note    |
+
+#### GET `/enquiries` 🛡️
+**Query:** `page`, `limit`, `status`, `role`, `priority`, `category`, `search` (name/email/subject/ticketId). Replies are omitted from the list view.
+
+#### GET `/enquiries/stats` 🛡️
+**200** → `{ total, byStatus, byRole, byCategory, avgResponseTime }`.
+
+#### GET `/enquiries/:id` 🛡️
+**200** → `{ enquiry, contactLinks: { callLink, whatsappLink, mailLink } }`.
+
+#### POST `/enquiries/:id/reply` 🛡️
+**Body** `{ "message": "Thanks for reaching out..." }`. Appends an admin reply, sets status `contacted`, emails the user. Fails (**400**) if the enquiry is already `resolved`.
+
+#### PATCH `/enquiries/:id/status` 🛡️
+**Body** `{ "status": "resolved", "priority": "high", "adminNote": "Called back" }` — all optional. Setting `resolved` stamps `respondedAt`.
+
+---
+
+### 8. Enrollments — `/enrollments`
+
+> Entire router behind `verifyJWT`.
+
+| Method | Path                                      | Auth        | Description                          |
+|--------|-------------------------------------------|-------------|--------------------------------------|
+| GET    | `/enrollments/my-courses`                 | 🔑          | Caller's enrolled courses + progress |
+| POST   | `/enrollments`                            | 🛡️          | Enroll a student into a course       |
+| DELETE | `/enrollments/:enrollmentId`              | 🛡️          | Unenroll (soft delete)               |
+| GET    | `/enrollments/course/:courseId/students`  | 🛡️ / 🎓     | Students in a course (+ progress)    |
+| GET    | `/enrollments/student/:userId`            | 🛡️          | All courses a student is enrolled in |
+
+#### GET `/enrollments/my-courses` 🔑
+**200** → array of `{ enrollmentId, enrolledAt, course, progress: { completionPercent, lastAccessedAt } }`.
+
+#### POST `/enrollments` 🛡️
+**Body** `{ "userId": 12, "courseId": "<ObjectId>" }`. The target user must exist in PostgreSQL and be a `student`. Re-enrolls (re-activates) a previously unenrolled student. Creates an empty progress doc on first enrollment.
+- **201** → enrollment created · **200** → re-enrolled · **409** → already enrolled.
+
+#### DELETE `/enrollments/:enrollmentId` 🛡️
+Soft delete (`isActive=false`, stamps `unenrolledAt`) — keeps progress history. **200**.
+
+#### GET `/enrollments/course/:courseId/students` 🛡️ / 🎓
+**Query:** `page` (1), `limit` (20). Instructors may only view their own courses (else **403**). **200** → `{ students: [ { enrollmentId, enrolledAt, user, progress } ], total, page, limit }`.
+
+#### GET `/enrollments/student/:userId` 🛡️
+**200** → array of `{ enrollmentId, enrolledAt, course, progress }` for that student.
+
+---
+
+### 9. Progress — `/progress`
+
+> Entire router behind `verifyJWT`.
+
+| Method | Path                            | Auth        | Description                                 |
+|--------|---------------------------------|-------------|---------------------------------------------|
+| POST   | `/progress/mark-watched`        | 👤          | Mark a material watched/completed           |
+| GET    | `/progress/my-progress/:courseId`| 🔑         | Caller's detailed progress in a course      |
+| GET    | `/progress/course/:courseId`    | 🛡️ / 🎓     | All students' progress in a course          |
+| GET    | `/progress/student/:userId`     | 🛡️          | A student's progress across all courses     |
+| GET    | `/progress/overview`            | 🛡️          | Platform-wide progress overview             |
+
+#### POST `/progress/mark-watched` 👤
+Caller must be enrolled & active in the course.
+**Body**
+```json
+{ "courseId": "<ObjectId>", "materialId": "<ObjectId>", "watchPercent": 100 }
+```
+Recomputes `completionPercent` (unique materials watched ÷ total materials). Sets `completedAt` when it reaches 100%.
+**200** → `{ completionPercent, completedAt, totalMaterials, completedMaterials }`.
+
+#### GET `/progress/my-progress/:courseId` 🔑
+Per-module breakdown with each material's `isCompleted` flag.
+**200** → `{ courseId, courseTitle, completionPercent, lastAccessedAt, completedAt, enrolledAt, moduleBreakdown: [...] }`.
+
+#### GET `/progress/course/:courseId` 🛡️ / 🎓
+**Query:** `page` (1), `limit` (20). Instructors restricted to their own courses. **200** → `{ courseTitle, totalMaterials, summary: { totalEnrolled, avgCompletionPercent, fullyCompleted, inProgress }, students: [...], page, limit, total }`.
+
+#### GET `/progress/student/:userId` 🛡️
+**200** → array of `{ courseId, courseTitle, courseThumbnail, category, completionPercent, lastAccessedAt, completedAt, enrolledAt }`.
+
+#### GET `/progress/overview` 🛡️
+Aggregated per-course stats. **200** → array of `{ courseId, courseTitle, totalStudents, avgCompletion, completed, neverStarted, completionRate }`.
+
+---
+
+## Data Models
+
+### PostgreSQL — `users`
+Authoritative store for identity. Referenced from Mongo documents by `userId`.
+
+| Column        | Notes                                            |
+|---------------|--------------------------------------------------|
+| `id`          | Primary key (referenced as `userId` in Mongo)    |
+| `full_name`   |                                                  |
+| `email`       | Unique                                           |
+| `password`    | bcrypt hash                                       |
+| `role`        | `student` \| `instructor` \| `admin`             |
+| `phone`       |                                                  |
+| `location`    |                                                  |
+| `avatar`      | Nullable                                         |
+| `is_verified` | Boolean                                          |
+| `is_active`   | Boolean                                          |
+| `refresh_token`| Current refresh token (validated on refresh)    |
+| `created_at`  |                                                  |
+
+### MongoDB (Mongoose)
+
+#### Course
+```
+title*        String
+description*  String
+category*     String
+level         "beginner" | "intermediate" | "advanced"  (default "beginner")
+price         Number (default 0)
+thumbnail / thumbnailPublicId   String  (Cloudinary)
+isPublished   Boolean (default false)
+createdBy     String   (PG user id)
+modules       [ObjectId → Module]
+prerequisites / benefits / targetAudience   [String]
+language      String (default "English")
+totalDuration / totalStudentsEnrolled       Number
+averageRating / totalReviews                Number
+reviews       [{ userId, rating 1–5, comment, isFeatured, createdAt }]
+timestamps
+```
+
+#### Module
+```
+title*        String
+description   String
+course*       ObjectId → Course
+order         Number (default 0)
+materials     [ObjectId → Material]
+timestamps
+```
+
+#### Material
+```
+title*    String
+type*     "pdf" | "image" | "video"
+url*      String  (Cloudinary URL)
+publicId* String  (Cloudinary id, used for deletion)
+module*   ObjectId → Module
+order     Number
+duration  Number (seconds, videos)
+size      Number (bytes)
+timestamps
+```
+
+#### Enrollment
+```
+userId*       Number  (PG user id)
+courseId*     ObjectId → Course
+enrolledBy*   Number  (admin PG id)
+isActive      Boolean (default true)
+unenrolledAt  Date
+timestamps
+unique index: { userId, courseId }
+```
+
+#### Progress
+```
+userId*            Number  (PG user id)
+courseId*          ObjectId → Course
+completedMaterials [{ materialId, watchedAt, watchPercent 0–100 }]
+completionPercent  Number 0–100 (default 0)
+lastAccessedAt     Date
+completedAt        Date (set at 100%)
+timestamps
+unique index: { userId, courseId }
+```
+
+#### Enquiry
+```
+ticketId   String  (auto: "TKT-0001", "TKT-0002", ...)
+name*      String
+email*     String
+phone      String
+subject*   String
+message*   String
+role       "guest" | "student" | "instructor"  (default "guest")
+status     "pending" | "contacted" | "resolved"  (default "pending")
+priority   "low" | "medium" | "high" | "urgent"  (default "medium")
+category   "course_issue" | "payment" | "general" | "technical"  (default "general")
+adminNote  String
+replies    [{ message, sentBy: "user"|"admin", sentAt }]
+respondedAt Date
+timestamps
+```
+
+> `*` = required.
 
 ---
 
 ## Environment Variables
 
-| Variable | Description |
-|----------|-------------|
-| `PORT` | Server port (default: `3000`) |
-| `NODE_ENV` | `development` or `production` |
-| `DATABASE_URL` | PostgreSQL connection string (Neon recommended) |
-| `MONGODB_URI` | MongoDB connection string |
-| `ACCESS_TOKEN_SECRET` | JWT signing secret for access tokens |
-| `ACCESS_TOKEN_EXPIRY` | Access token TTL, e.g. `1d` |
-| `REFRESH_TOKEN_SECRET` | JWT signing secret for refresh tokens |
-| `REFRESH_TOKEN_EXPIRY` | Refresh token TTL, e.g. `7d` |
-| `CLOUDINARY_CLOUD_NAME` | Cloudinary cloud name |
-| `CLOUDINARY_API_KEY` | Cloudinary API key |
-| `CLOUDINARY_API_SECRET` | Cloudinary API secret |
-| `ADMIN_EMAIL` | Admin contact email (shown on contact page) |
-| `ADMIN_PHONE` | Admin contact phone number |
-| `WHATSAPP_GUEST` | WhatsApp number for guests / unenrolled users |
-| `WHATSAPP_ENROLLED` | WhatsApp number for enrolled students |
-| `WHATSAPP_INSTRUCTOR` | WhatsApp number for instructors |
-| `SMTP_HOST` | SMTP server host, e.g. `smtp.gmail.com` |
-| `SMTP_PORT` | SMTP port, e.g. `587` |
-| `SMTP_USER` | SMTP username / sender email address |
-| `SMTP_PASS` | SMTP password or app password |
-| `CLIENT_URL` | Frontend origin URL (used for CORS in production) |
+Create a `.env` in `backend/`:
+
+```ini
+# Server
+PORT=3000
+NODE_ENV=development
+CLIENT_URL=http://localhost:5173        # used for CORS in production
+
+# JWT
+ACCESS_TOKEN_SECRET=your_access_secret
+REFRESH_TOKEN_SECRET=your_refresh_secret
+
+# PostgreSQL (users) — see src/config/db.js
+DATABASE_URL=postgres://user:pass@host:5432/dbname
+# (or PGHOST / PGUSER / PGPASSWORD / PGDATABASE / PGPORT)
+
+# MongoDB (courses, enrollments, progress, enquiries)
+MONGODB_URI=mongodb://localhost:27017/fillip
+
+# Cloudinary (media)
+CLOUDINARY_CLOUD_NAME=...
+CLOUDINARY_API_KEY=...
+CLOUDINARY_API_SECRET=...
+
+# Email (Nodemailer)
+SMTP_USER=you@gmail.com
+SMTP_PASS=app_password
+ADMIN_EMAIL=admin@fillip.com
+ADMIN_PHONE=+91XXXXXXXXXX
+
+# WhatsApp routing (contact info)
+WHATSAPP_GUEST=+91XXXXXXXXXX
+WHATSAPP_INSTRUCTOR=+91XXXXXXXXXX
+WHATSAPP_ENROLLED=+91XXXXXXXXXX
+```
+
+> Exact PostgreSQL and Cloudinary/Mongo variable names depend on `src/config/db.js`,
+> `src/config/mongodb.js`, and `src/config/cloudinary.js` — check those files and
+> match your `.env` accordingly.
 
 ---
 
-## Tech Stack
-
-| Layer | Technology |
-|-------|-----------|
-| Framework | Express 5 |
-| Authentication | JWT (jsonwebtoken) + HTTP-only cookies |
-| Primary DB | PostgreSQL via `pg` (Neon serverless compatible) |
-| Secondary DB | MongoDB via Mongoose |
-| File uploads | Multer (disk temp) → Cloudinary |
-| Email | Nodemailer with Gmail SMTP |
-| Input validation | Zod |
-| Password hashing | bcrypt |
+*Generated from the route, controller, and model source under `backend/src/`. Keep
+this file in sync when endpoints change.*
