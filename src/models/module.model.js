@@ -9,7 +9,10 @@ const moduleSchema = new mongoose.Schema(
       ref: "Course",
       required: true,
     },
-    order: { type: Number, default: 0 },           // For ordering modules
+    order:    { type: Number, default: 0 },
+    topics:   [{ type: String }],
+    skills:   [{ type: String }],
+    project:  { type: String, default: "" },
     materials: [{ type: mongoose.Schema.Types.ObjectId, ref: "Material" }],
   },
   { timestamps: true }

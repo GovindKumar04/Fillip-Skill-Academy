@@ -7,6 +7,12 @@ import { contactRouter } from "./routes/contact.routes.js";
 import { enquiryRouter } from "./routes/enquiry.routes.js";
 import { progressRouter } from "./routes/progress.routes.js";
 import { enrollmentRouter } from "./routes/enrollment.routes.js";
+import { paymentRouter } from "./routes/payment.routes.js";
+import { siteConfigRouter } from "./routes/siteConfig.routes.js";
+import { scholarshipRouter } from "./routes/scholarship.routes.js";
+import { affiliateRouter } from "./routes/affiliate.routes.js";
+import { teachingRequestRouter } from "./routes/teachingRequest.routes.js";
+import { batchRouter } from "./routes/batch.routes.js";
 
 const app = express();
 
@@ -25,6 +31,12 @@ app.use("/contact", contactRouter);
 app.use("/enquiries", enquiryRouter);
 app.use("/progress", progressRouter);
 app.use("/enrollments", enrollmentRouter);
+app.use("/payments", paymentRouter);
+app.use("/site-config", siteConfigRouter);
+app.use("/scholarships", scholarshipRouter);
+app.use("/affiliates", affiliateRouter);
+app.use("/teaching-requests", teachingRequestRouter);
+app.use("/batches", batchRouter);
 
 // GLOBAL ERROR HANDLER — must be last
 app.use((err, req, res, next) => {

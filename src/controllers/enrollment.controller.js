@@ -11,8 +11,22 @@ import pool from "../config/db.js";
 // Admin enrolls a student into a course
 // Body: { userId, courseId }
 // ─────────────────────────────────────────────────────────────────────────────
+const checkMyEnrollment = asyncHandler(async (req, res) => {
+  const { courseId } = req.params;
+  const enrollment = await Enrollment.findOne({
+    userId: req.user.id,
+    courseId,
+    isActive: true,
+  }).select("enrollmentType");
+
+  if (!enrollment) {
+    return res.json(new ApiResponse(200, { isEnrolled: false, enrollmentType: null }));
+  }
+  return res.json(new ApiResponse(200, { isEnrolled: true, enrollmentType: enrollment.enrollmentType }));
+});
+
 const enrollStudent = asyncHandler(async (req, res) => {
-  const { userId, courseId } = req.body;
+  const { userId, courseId, enrollmentType = "online" } = req.body;
 
   if (!userId || !courseId) {
     throw new ApiError(400, "userId and courseId are required");
@@ -43,6 +57,7 @@ const enrollStudent = asyncHandler(async (req, res) => {
     existing.isActive = true;
     existing.unenrolledAt = null;
     existing.enrolledBy = req.user.id;
+    existing.enrollmentType = enrollmentType;
     await existing.save();
     return res.status(200).json(
       new ApiResponse(200, existing, "Student re-enrolled successfully")
@@ -53,6 +68,7 @@ const enrollStudent = asyncHandler(async (req, res) => {
     userId,
     courseId,
     enrolledBy: req.user.id,
+    enrollmentType,
   });
 
   // Pre-create an empty progress document for this enrollment
@@ -89,7 +105,7 @@ const getMyCourses = asyncHandler(async (req, res) => {
     isActive: true,
   }).populate({
     path: "courseId",
-    select: "title description thumbnail category level price",
+    select: "title description thumbnail category level price slug duration",
   });
 
   // Attach progress percentage to each enrollment
@@ -175,6 +191,7 @@ const getCourseStudents = asyncHandler(async (req, res) => {
   const students = enrollments.map((e) => ({
     enrollmentId: e._id,
     enrolledAt: e.createdAt,
+    enrollmentType: e.enrollmentType,
     user: usersMap[e.userId] || { id: e.userId },
     progress: progressMap[e.userId] || {
       completionPercent: 0,
@@ -196,12 +213,12 @@ const getStudentEnrollments = asyncHandler(async (req, res) => {
   const { userId } = req.params;
 
   const enrollments = await Enrollment.find({
-    userId: Number(userId),
+    userId: userId,
     isActive: true,
   }).populate("courseId", "title thumbnail category level");
 
   const progressDocs = await Progress.find({
-    userId: Number(userId),
+    userId: userId,
   }).select("courseId completionPercent lastAccessedAt completedAt");
   const progressMap = {};
   progressDocs.forEach((p) => (progressMap[p.courseId.toString()] = p));
@@ -219,10 +236,74 @@ const getStudentEnrollments = asyncHandler(async (req, res) => {
   return res.json(new ApiResponse(200, result));
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /enrollments  (admin only)
+// Returns all active enrollments with user info and course title
+// ─────────────────────────────────────────────────────────────────────────────
+const getAllEnrollments = asyncHandler(async (req, res) => {
+  const { page = 1, limit = 10, search = "" } = req.query;
+  const pageNum = Number(page);
+  const limitNum = Number(limit);
+
+  const filter = { isActive: true };
+
+  const [enrollments, total] = await Promise.all([
+    Enrollment.find(filter)
+      .populate("courseId", "title category level thumbnail")
+      .skip((pageNum - 1) * limitNum)
+      .limit(limitNum)
+      .sort({ createdAt: -1 }),
+    Enrollment.countDocuments(filter),
+  ]);
+
+  if (enrollments.length === 0) {
+    return res.json(new ApiResponse(200, { enrollments: [], total: 0, page: pageNum, limit: limitNum, totalPages: 0 }));
+  }
+
+  const userIds = enrollments.map((e) => e.userId);
+  const placeholders = userIds.map((_, i) => `$${i + 1}`).join(", ");
+  const usersResult = await pool.query(
+    `SELECT id, full_name, email, phone FROM users WHERE id IN (${placeholders})`,
+    userIds
+  );
+  const usersMap = {};
+  usersResult.rows.forEach((u) => (usersMap[u.id] = u));
+
+  let data = enrollments.map((e) => ({
+    id: e._id,
+    enrolledAt: e.createdAt,
+    enrollmentType: e.enrollmentType,
+    user: usersMap[e.userId] || { id: e.userId },
+    course: e.courseId,
+  }));
+
+  if (search) {
+    const s = search.toLowerCase();
+    data = data.filter(
+      (d) =>
+        d.user?.full_name?.toLowerCase().includes(s) ||
+        d.user?.email?.toLowerCase().includes(s) ||
+        d.course?.title?.toLowerCase().includes(s)
+    );
+  }
+
+  return res.json(
+    new ApiResponse(200, {
+      enrollments: data,
+      total,
+      page: pageNum,
+      limit: limitNum,
+      totalPages: Math.ceil(total / limitNum),
+    })
+  );
+});
+
 export {
+  checkMyEnrollment,
   enrollStudent,
   unenrollStudent,
   getMyCourses,
   getCourseStudents,
   getStudentEnrollments,
+  getAllEnrollments,
 };

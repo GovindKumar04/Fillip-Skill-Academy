@@ -265,7 +265,7 @@ const getCourseProgress = asyncHandler(async (req, res) => {
 const getStudentProgress = asyncHandler(async (req, res) => {
   const { userId } = req.params;
 
-  const progressDocs = await Progress.find({ userId: Number(userId) }).populate(
+  const progressDocs = await Progress.find({ userId }).populate(
     "courseId",
     "title thumbnail category"
   );

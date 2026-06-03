@@ -64,8 +64,8 @@ const enquirySchema = new mongoose.Schema(
 
     status: {
       type: String,
-      enum: ["pending", "contacted", "resolved"],
-      default: "pending",
+      enum: ["open", "pending", "contacted", "resolved"],
+      default: "open",
     },
 
     priority: {
@@ -79,6 +79,14 @@ const enquirySchema = new mongoose.Schema(
       enum: ["course_issue", "payment", "general", "technical"],
       default: "general",
     },
+
+    attachments: [
+      {
+        url:      { type: String, required: true },
+        publicId: { type: String, required: true },
+        type:     { type: String, enum: ["image", "pdf"], default: "image" },
+      },
+    ],
 
     adminNote: {
       type: String,

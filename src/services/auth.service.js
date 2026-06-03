@@ -15,6 +15,7 @@ export const registerUserService = async ({
   role,
   phone,
   location,
+  referredBy = null,
 }) => {
   const existingUser = await pool.query(
     `
@@ -39,10 +40,11 @@ export const registerUserService = async ({
       password,
       role,
       phone,
-      location
+      location,
+      referred_by
     )
     VALUES
-    ($1, $2, $3, $4, $5, $6)
+    ($1, $2, $3, $4, $5, $6, $7)
 
     RETURNING
     id,
@@ -54,7 +56,7 @@ export const registerUserService = async ({
     location,
     created_at
     `,
-    [full_name, email, hashedPassword, role || "student", phone, location],
+    [full_name, email, hashedPassword, role || "student", phone, location, referredBy],
   );
 
   return result.rows[0];

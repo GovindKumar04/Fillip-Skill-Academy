@@ -3,6 +3,7 @@ import {
   createCourse,
   getAllCourses,
   getCourseById,
+  getCourseBySlug,
   updateCourse,
   deleteCourse,
 } from "../controllers/course.controller.js";
@@ -24,65 +25,55 @@ import {
   toggleFeatured,
 } from "../controllers/review.controller.js";
 import { verifyJWT } from "../middlewares/auth.middleware.js";
+import { optionalAuth } from "../middlewares/optionalAuth.middleware.js";
 import { requireRole } from "../middlewares/role.middleware.js";
 import { upload } from "../middlewares/multer.middleware.js";
 
 const courseRouter = express.Router();
 
-
-courseRouter.use(verifyJWT);
-
 // ─── Courses ──────────────────────────────────────────────
 courseRouter.post(
   "/",
-  requireRole("admin"),
-  upload.single("thumbnail"), // optional thumbnail image
+  verifyJWT, requireRole("admin"),
+  upload.single("thumbnail"),
   createCourse,
 );
-courseRouter.get("/", getAllCourses); // students see published only
-courseRouter.get("/:courseId", getCourseById);
+courseRouter.get("/", optionalAuth, getAllCourses);
+courseRouter.get("/slug/:slug", optionalAuth, getCourseBySlug);  // by URL slug
+courseRouter.get("/:courseId", optionalAuth, getCourseById);
 
 courseRouter.patch(
   "/:courseId",
-  requireRole("admin"),
+  verifyJWT, requireRole("admin"),
   upload.single("thumbnail"),
   updateCourse,
 );
-
-courseRouter.delete("/:courseId", requireRole("admin"), deleteCourse);
+courseRouter.delete("/:courseId", verifyJWT, requireRole("admin"), deleteCourse);
 
 // ─── Modules ──────────────────────────────────────────────
-courseRouter.post("/:courseId/modules", requireRole("admin"), createModule);
-courseRouter.get("/:courseId/modules", getModules);
-courseRouter.patch(
-  "/:courseId/modules/:moduleId",
-  requireRole("admin"),
-  updateModule,
-);
-courseRouter.delete(
-  "/:courseId/modules/:moduleId",
-  requireRole("admin"),
-  deleteModule,
-);
+courseRouter.post("/:courseId/modules", verifyJWT, requireRole("admin"), createModule);
+courseRouter.get("/:courseId/modules", optionalAuth, getModules);
+courseRouter.patch("/:courseId/modules/:moduleId", verifyJWT, requireRole("admin"), updateModule);
+courseRouter.delete("/:courseId/modules/:moduleId", verifyJWT, requireRole("admin"), deleteModule);
 
 // ─── Materials ────────────────────────────────────────────
 courseRouter.post(
   "/:courseId/modules/:moduleId/materials",
-  requireRole("admin"),
-  upload.array("files", 10), // up to 10 files at once
+  verifyJWT, requireRole("admin"),
+  upload.array("files", 10),
   uploadMaterials,
 );
 courseRouter.delete(
   "/:courseId/modules/:moduleId/materials/:materialId",
-  requireRole("admin"),
+  verifyJWT, requireRole("admin"),
   deleteMaterial,
 );
 
 // ─── Reviews & Testimonials ───────────────────────────────
-courseRouter.get("/:courseId/reviews", getReviews);
-courseRouter.get("/:courseId/reviews/testimonials", getTestimonials);
-courseRouter.post("/:courseId/reviews", requireRole("student"), addOrUpdateReview);
-courseRouter.delete("/:courseId/reviews", deleteReview);
-courseRouter.patch("/:courseId/reviews/featured", requireRole("admin"), toggleFeatured);
+courseRouter.get("/:courseId/reviews", optionalAuth, getReviews);
+courseRouter.get("/:courseId/reviews/testimonials", optionalAuth, getTestimonials);
+courseRouter.post("/:courseId/reviews", verifyJWT, requireRole("student"), addOrUpdateReview);
+courseRouter.delete("/:courseId/reviews", verifyJWT, deleteReview);
+courseRouter.patch("/:courseId/reviews/featured", verifyJWT, requireRole("admin"), toggleFeatured);
 
 export { courseRouter };

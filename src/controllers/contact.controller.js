@@ -1,6 +1,7 @@
 import { Enrollment } from "../models/enrollment.model.js";
 import { Enquiry } from "../models/enquiry.model.js";
 import { sendConfirmationMail } from "../utils/mail.util.js";
+import { uploadToCloudinary } from "../utils/cloudinary.util.js";
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
@@ -97,6 +98,16 @@ const sendEnquiry = asyncHandler(async (req, res) => {
     throw new ApiError(400, "Name and email are required for guest enquiries");
   }
 
+  // Upload screenshots to Cloudinary (if any)
+  const attachments = [];
+  if (req.files?.length) {
+    for (const file of req.files) {
+      const type = file.mimetype === "application/pdf" ? "pdf" : "image";
+      const uploaded = await uploadToCloudinary(file.path, file.mimetype, "enquiry-attachments");
+      attachments.push({ url: uploaded.url, publicId: uploaded.publicId, type });
+    }
+  }
+
   // Save to MongoDB
   const enquiry = await Enquiry.create({
     name: senderName,
@@ -106,6 +117,7 @@ const sendEnquiry = asyncHandler(async (req, res) => {
     message,
     role,
     category: category || "general",
+    attachments,
     replies: [
       {
         message,

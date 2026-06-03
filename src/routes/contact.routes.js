@@ -6,24 +6,17 @@ import {
 } from "../controllers/contact.controller.js";
 
 import { optionalAuth } from "../middlewares/optionalAuth.middleware.js";
+import { upload } from "../middlewares/multer.middleware.js";
 
 const contactRouter = express.Router();
 
+contactRouter.get("/info", optionalAuth, getContactInfo);
 
-// GET /api/contact/info
-// Guest users + logged-in users both allowed
-contactRouter.get(
-  "/info",
-  optionalAuth,
-  getContactInfo
-);
-
-
-// POST /api/contact/enquiry
-// Guest users + logged-in users both allowed
+// Accept up to 3 screenshot/attachment files
 contactRouter.post(
   "/enquiry",
   optionalAuth,
+  upload.array("screenshots", 3),
   sendEnquiry
 );
 

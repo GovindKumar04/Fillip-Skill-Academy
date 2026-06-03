@@ -30,12 +30,15 @@ const createCourse = asyncHandler(async (req, res) => {
 });
 
 const getAllCourses = asyncHandler(async (req, res) => {
-  const pageNum = Number(req.query.page) || 1;
+  const pageNum  = Number(req.query.page)  || 1;
   const limitNum = Number(req.query.limit) || 10;
-  const { search } = req.query;
+  const { search, category, level } = req.query;
 
   const filter = {};
-  if (req.user.role !== "admin") filter.isPublished = true;
+  if (!req.user || req.user.role !== "admin") filter.isPublished = true;
+
+  if (category && category.trim()) filter.category = { $regex: category.trim(), $options: "i" };
+  if (level    && level.trim())    filter.level    = level.trim();
 
   if (search && search.trim()) {
     const regex = { $regex: search.trim(), $options: "i" };
@@ -65,7 +68,22 @@ const getCourseById = asyncHandler(async (req, res) => {
   });
 
   if (!course) throw new ApiError(404, "Course not found");
-  if (!course.isPublished && req.user.role !== "admin") {
+  if (!course.isPublished && req.user?.role !== "admin") {
+    throw new ApiError(403, "This course is not published yet");
+  }
+
+  return res.json(new ApiResponse(200, course));
+});
+
+const getCourseBySlug = asyncHandler(async (req, res) => {
+  const course = await Course.findOne({ slug: req.params.slug }).populate({
+    path: "modules",
+    options: { sort: { order: 1 } },
+    populate: { path: "materials" },
+  });
+
+  if (!course) throw new ApiError(404, "Course not found");
+  if (!course.isPublished && req.user?.role !== "admin") {
     throw new ApiError(403, "This course is not published yet");
   }
 
@@ -76,9 +94,31 @@ const updateCourse = asyncHandler(async (req, res) => {
   const course = await Course.findById(req.params.courseId);
   if (!course) throw new ApiError(404, "Course not found");
 
-  const allowedUpdates = ["title", "description", "category", "level", "price", "isPublished"];
-  allowedUpdates.forEach((field) => {
+  const scalarFields = [
+    "title", "description", "category", "level", "price",
+    "isPublished", "language", "duration", "priceOnline", "priceOffline",
+    "slug", "tag", "subtitle", "tagline", "heroImg",
+  ];
+  scalarFields.forEach((field) => {
     if (req.body[field] !== undefined) course[field] = req.body[field];
+  });
+
+  // Array and object fields sent as JSON strings from FormData
+  const jsonArrayFields = [
+    "benefits", "prerequisites", "targetAudience", "demandReasons",
+    "highlights", "learnPoints", "faqs",
+  ];
+  jsonArrayFields.forEach((field) => {
+    if (req.body[field] !== undefined) {
+      try { course[field] = JSON.parse(req.body[field]); } catch { /* ignore bad JSON */ }
+    }
+  });
+
+  const jsonObjectFields = ["whyChooseUs", "industry"];
+  jsonObjectFields.forEach((field) => {
+    if (req.body[field] !== undefined) {
+      try { course[field] = JSON.parse(req.body[field]); } catch { /* ignore */ }
+    }
   });
 
   if (req.file) {
@@ -120,4 +160,4 @@ const deleteCourse = asyncHandler(async (req, res) => {
   return res.json(new ApiResponse(200, null, "Course deleted successfully"));
 });
 
-export { createCourse, getAllCourses, getCourseById, updateCourse, deleteCourse };
+export { createCourse, getAllCourses, getCourseById, getCourseBySlug, updateCourse, deleteCourse };

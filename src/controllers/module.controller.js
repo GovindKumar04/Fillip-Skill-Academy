@@ -14,17 +14,18 @@ const createModule = asyncHandler(async (req, res) => {
     throw new ApiError(404, "Course not found");
   }
 
-  const { title, description, order } = req.body;
+  const { title, description, order, topics, skills, project } = req.body;
 
-  if (!title) {
-    throw new ApiError(400, "Module title is required");
-  }
+  if (!title) throw new ApiError(400, "Module title is required");
 
   const mod = await Module.create({
     title,
     description,
     course: course._id,
     order: order ?? course.modules.length,
+    topics: Array.isArray(topics) ? topics : [],
+    skills: Array.isArray(skills) ? skills : [],
+    project: project || "",
   });
 
   course.modules.push(mod._id);

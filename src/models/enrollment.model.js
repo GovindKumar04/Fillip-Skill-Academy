@@ -3,7 +3,7 @@ import mongoose from "mongoose";
 const enrollmentSchema = new mongoose.Schema(
   {
     userId: {
-      type: Number, // PostgreSQL user id
+      type: String, // PostgreSQL user UUID
       required: true,
     },
     courseId: {
@@ -12,9 +12,15 @@ const enrollmentSchema = new mongoose.Schema(
       required: true,
     },
     enrolledBy: {
-      type: Number, // admin's PG user id who enrolled the student
+      type: String, // admin's PG UUID who enrolled the student
       required: true,
     },
+    enrollmentType: {
+      type: String,
+      enum: ["online", "offline"],
+      default: "online",
+    },
+
     isActive: {
       type: Boolean,
       default: true,

@@ -135,6 +135,69 @@ const courseSchema = new mongoose.Schema(
     },
 
     reviews: [reviewSchema],
+
+    duration: {
+      type: String,
+      default: "",
+    },
+
+    priceOnline: {
+      type: Number,
+      default: 0,
+    },
+
+    priceOffline: {
+      type: Number,
+      default: 0,
+    },
+
+    demandReasons: [
+      {
+        type: String,
+      },
+    ],
+
+    whyChooseUs: [
+      {
+        title: { type: String },
+        description: { type: String },
+      },
+    ],
+
+    // ── Course-page display fields ──────────────────────────────────────────
+    slug: { type: String, unique: true, sparse: true, trim: true },
+    tag:      { type: String, default: "" },   // e.g. "#1 MERN Bootcamp"
+    subtitle: { type: String, default: "" },
+    tagline:  { type: String, default: "" },
+    heroImg:  { type: String, default: "" },
+
+    highlights: [
+      {
+        title: { type: String },
+        desc:  { type: String },
+      },
+    ],
+
+    learnPoints: [{ type: String }],
+
+    industry: {
+      title:    { type: String },
+      subtitle: { type: String },
+      points: [
+        {
+          icon:  { type: String },
+          title: { type: String },
+          desc:  { type: String },
+        },
+      ],
+    },
+
+    faqs: [
+      {
+        q: { type: String },
+        a: { type: String },
+      },
+    ],
   },
   { timestamps: true },
 );

@@ -2,17 +2,20 @@ import { ApiError } from "../utils/ApiError.js";
 
 export const validate = (schema) => {
   return (req, res, next) => {
-    try {
-      schema.parse(req.body);
+    const result = schema.safeParse(req.body);
 
-      next();
-    } catch (error) {
-      const formattedErrors = error.errors.map((err) => ({
-        field: err.path[0],
-        message: err.message,
-      }));
-
-      next(new ApiError(400, "Validation failed", formattedErrors));
+    if (result.success) {
+      return next();
     }
+
+    // Zod v4 uses .issues; v3 also exposed .errors as an alias — handle both
+    const issues = result.error?.issues ?? result.error?.errors ?? [];
+
+    const formattedErrors = issues.map((issue) => ({
+      field: issue.path?.[0] ?? "unknown",
+      message: issue.message,
+    }));
+
+    return next(new ApiError(400, "Validation failed", formattedErrors));
   };
 };
