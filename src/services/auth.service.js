@@ -1,5 +1,7 @@
 import bcrypt from "bcrypt";
+import jwt from "jsonwebtoken";
 import pool from "../config/db.js";
+import cloudinary from "../config/cloudinary.js";
 
 import { ApiError } from "../utils/ApiError.js";
 import { generateRollNumber } from "../utils/roll.util.js";
@@ -8,6 +10,16 @@ import {
   generateAccessToken,
   generateRefreshToken,
 } from "../utils/jwt.utils.js";
+
+// Resolve an affiliate referral code → the referrer's user id (null if invalid).
+export const resolveReferral = async (referralCode) => {
+  if (!referralCode) return null;
+  const aff = await pool.query(
+    "SELECT user_id FROM affiliates WHERE code = $1 AND status = 'active'",
+    [referralCode]
+  );
+  return aff.rows.length > 0 ? aff.rows[0].user_id : null;
+};
 
 export const registerUserService = async ({
   full_name,
@@ -200,4 +212,105 @@ export const loginUserService = async ({ email, password }) => {
     accessToken,
     refreshToken,
   };
+};
+
+// Current logged-in user's public profile
+export const getCurrentUserService = async (userId) => {
+  const result = await pool.query(
+    `SELECT id, full_name, email, roll_number, role, phone, avatar, is_verified, is_active, created_at
+     FROM users WHERE id = $1`,
+    [userId]
+  );
+  if (result.rows.length === 0) throw new ApiError(404, "User not found");
+  return result.rows[0];
+};
+
+// Paginated user listing with optional role filter + search (admin)
+export const getUsersService = async ({ role, page = 1, limit = 50, search }) => {
+  const conditions = [];
+  const params = [];
+
+  if (role) {
+    params.push(role);
+    conditions.push(`role = $${params.length}`);
+  }
+  if (search) {
+    params.push(`%${search}%`);
+    conditions.push(`(full_name ILIKE $${params.length} OR email ILIKE $${params.length} OR roll_number ILIKE $${params.length})`);
+  }
+
+  const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+  const countResult = await pool.query(`SELECT COUNT(*) FROM users ${where}`, params);
+  const total = Number(countResult.rows[0].count);
+
+  params.push(Number(limit), (Number(page) - 1) * Number(limit));
+  const result = await pool.query(
+    `SELECT id, full_name, email, roll_number, role, phone, location, avatar, is_active, created_at
+     FROM users ${where}
+     ORDER BY created_at DESC
+     LIMIT $${params.length - 1} OFFSET $${params.length}`,
+    params
+  );
+
+  return { users: result.rows, total, page: Number(page), limit: Number(limit) };
+};
+
+// Upload an avatar image (path from multer) to Cloudinary and save the URL.
+export const updateAvatarService = async ({ userId, filePath }) => {
+  // Deterministic public_id per user → re-uploads overwrite the old image.
+  const result = await cloudinary.uploader.upload(filePath, {
+    folder: "avatars",
+    public_id: `user_${userId}`,
+    overwrite: true,
+    resource_type: "image",
+    transformation: [{ width: 400, height: 400, crop: "fill", gravity: "face" }],
+  });
+
+  const updated = await pool.query(
+    `UPDATE users SET avatar = $1, updated_at = NOW()
+     WHERE id = $2
+     RETURNING id, full_name, email, roll_number, role, phone, location, avatar, created_at`,
+    [result.secure_url, userId]
+  );
+  if (updated.rows.length === 0) throw new ApiError(404, "User not found");
+  return updated.rows[0];
+};
+
+// Change password after verifying the current one
+export const changePasswordService = async ({ userId, currentPassword, newPassword }) => {
+  if (newPassword.length < 6) {
+    throw new ApiError(400, "New password must be at least 6 characters");
+  }
+  const result = await pool.query("SELECT password FROM users WHERE id = $1", [userId]);
+  if (result.rows.length === 0) throw new ApiError(404, "User not found");
+
+  const ok = await bcrypt.compare(currentPassword, result.rows[0].password);
+  if (!ok) throw new ApiError(401, "Current password is incorrect");
+
+  const hashed = await bcrypt.hash(newPassword, 10);
+  await pool.query("UPDATE users SET password = $1, updated_at = NOW() WHERE id = $2", [hashed, userId]);
+};
+
+// Verify a refresh token + rotate a new access token
+export const refreshAccessTokenService = async (token) => {
+  if (!token) throw new ApiError(401, "No refresh token");
+
+  let decoded;
+  try {
+    decoded = jwt.verify(token, process.env.REFRESH_TOKEN_SECRET);
+  } catch {
+    throw new ApiError(401, "Invalid or expired refresh token");
+  }
+
+  const result = await pool.query(
+    `SELECT id, email, role, refresh_token FROM users WHERE id = $1`,
+    [decoded.id]
+  );
+  if (result.rows.length === 0) throw new ApiError(404, "User not found");
+
+  const user = result.rows[0];
+  if (user.refresh_token !== token) throw new ApiError(401, "Refresh token mismatch");
+
+  return generateAccessToken(user);
 };

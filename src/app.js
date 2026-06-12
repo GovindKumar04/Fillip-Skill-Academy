@@ -16,6 +16,8 @@ import { batchRouter } from "./routes/batch.routes.js";
 import { attendanceRouter } from "./routes/attendance.routes.js";
 import { certificateRouter } from "./routes/certificate.routes.js";
 import { mailRouter } from "./routes/mail.routes.js";
+import { chatRouter } from "./routes/chat.routes.js";
+import { getSitemap } from "./controllers/sitemap.controller.js";
 
 const app = express();
 
@@ -27,6 +29,10 @@ app.use(cors({
   credentials: true,
 }));
 app.use(cookieParser());
+
+// Dynamic sitemap — built from published courses + static routes.
+// In production Nginx proxies /sitemap.xml here (see deploy/nginx.conf).
+app.get("/sitemap.xml", getSitemap);
 
 app.use("/auth", authrouter);
 app.use("/courses", courseRouter);
@@ -43,6 +49,7 @@ app.use("/batches", batchRouter);
 app.use("/attendance", attendanceRouter);
 app.use("/certificates", certificateRouter);
 app.use("/mail", mailRouter);
+app.use("/chat", chatRouter);
 
 // GLOBAL ERROR HANDLER — must be last
 app.use((err, req, res, next) => {

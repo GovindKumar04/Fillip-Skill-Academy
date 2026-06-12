@@ -1,16 +1,11 @@
 import fs from "fs";
 import { asyncHandler } from "../utils/asyncHandler.js";
-import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
-import { sendDirectMail } from "../utils/mail.util.js";
+import { sendDirectMailService } from "../services/mail.service.js";
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-// ─────────────────────────────────────────────────────────────────────────────
 // POST /mail/send  (admin only, multipart)
 // Body: { to, subject, message } + attachments[] files
 //   to → one or more emails (comma / semicolon / newline separated)
-// ─────────────────────────────────────────────────────────────────────────────
 const sendMail = asyncHandler(async (req, res) => {
   const { to, subject, message } = req.body;
   const files = req.files || [];
@@ -22,30 +17,12 @@ const sendMail = asyncHandler(async (req, res) => {
     });
 
   try {
-    if (!to?.trim() || !subject?.trim() || !message?.trim()) {
-      throw new ApiError(400, "to, subject and message are required");
-    }
-
-    const recipients = to.split(/[,;\n]+/).map((s) => s.trim()).filter(Boolean);
-    if (recipients.length === 0) throw new ApiError(400, "Provide at least one recipient email");
-
-    const invalid = recipients.filter((e) => !EMAIL_RE.test(e));
-    if (invalid.length) throw new ApiError(400, `Invalid email address(es): ${invalid.join(", ")}`);
-
-    const attachments = files.map((f) => ({ filename: f.originalname, path: f.path }));
-
-    await sendDirectMail({
-      to: recipients,
-      subject: subject.trim(),
-      message: message.trim(),
-      attachments,
-    });
-
+    const { recipients, attachments } = await sendDirectMailService({ to, subject, message, files });
     return res.json(
       new ApiResponse(
         200,
-        { recipients: recipients.length, attachments: attachments.length },
-        `Email sent to ${recipients.length} recipient(s)${attachments.length ? ` with ${attachments.length} attachment(s)` : ""}`
+        { recipients, attachments },
+        `Email sent to ${recipients} recipient(s)${attachments ? ` with ${attachments} attachment(s)` : ""}`
       )
     );
   } finally {
