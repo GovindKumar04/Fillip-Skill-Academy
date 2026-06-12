@@ -68,38 +68,48 @@ export const chatService = async ({ messages, user }) => {
 
   const convo = [buildSystemMessage(user), ...sanitizeHistory(messages)];
 
-  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    const completion = await openai.chat.completions.create({
-      model: CHAT_MODEL,
-      messages: convo,
-      tools,
-      temperature: 0.3,
-    });
-
-    const msg = completion.choices?.[0]?.message;
-    if (!msg) throw new ApiError(502, "No response from the language model");
-
-    // No tool calls → this is the final answer.
-    if (!msg.tool_calls || msg.tool_calls.length === 0) {
-      return { reply: (msg.content || "").trim() || "Sorry, I didn't catch that — could you rephrase?" };
-    }
-
-    // Otherwise execute each requested tool and feed the results back.
-    convo.push(msg);
-    for (const call of msg.tool_calls) {
-      let args = {};
-      try {
-        args = call.function.arguments ? JSON.parse(call.function.arguments) : {};
-      } catch {
-        args = {};
-      }
-      const result = await executeTool(call.function.name, args, user);
-      convo.push({
-        role: "tool",
-        tool_call_id: call.id,
-        content: JSON.stringify(result),
+  try {
+    for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+      const completion = await openai.chat.completions.create({
+        model: CHAT_MODEL,
+        messages: convo,
+        tools,
+        temperature: 0.3,
       });
+
+      const msg = completion.choices?.[0]?.message;
+      if (!msg) throw new ApiError(502, "No response from the language model");
+
+      // No tool calls → this is the final answer.
+      if (!msg.tool_calls || msg.tool_calls.length === 0) {
+        return { reply: (msg.content || "").trim() || "Sorry, I didn't catch that — could you rephrase?" };
+      }
+
+      // Otherwise execute each requested tool and feed the results back.
+      convo.push(msg);
+      for (const call of msg.tool_calls) {
+        let args = {};
+        try {
+          args = call.function.arguments ? JSON.parse(call.function.arguments) : {};
+        } catch {
+          args = {};
+        }
+        const result = await executeTool(call.function.name, args, user);
+        convo.push({
+          role: "tool",
+          tool_call_id: call.id,
+          content: JSON.stringify(result),
+        });
+      }
     }
+  } catch (err) {
+    // OpenAI/network failure (quota exceeded, rate limit, outage…) — never let the
+    // chat UI hit a raw 500; respond gracefully and point to human support.
+    console.error("[chat] model call failed:", err?.status ?? "", err?.message ?? err);
+    return {
+      reply:
+        "Sorry — I can't reach the assistant right now. Please try again in a moment, or reach our team via /contact.",
+    };
   }
 
   // Tool loop didn't converge — give a graceful fallback.

@@ -3,7 +3,13 @@ import { Course } from "../models/course.model.js";
 import { ApiError } from "../utils/ApiError.js";
 import pool from "../config/db.js";
 
-// Instructor requests to teach a course (re-opens a previously rejected request).
+// After withdrawing their own request, an instructor must wait this long before
+// they can apply to teach the same course again.
+export const WITHDRAW_HOLD_DAYS = 30;
+const holdUntilFrom = (withdrawnAt) =>
+  new Date(new Date(withdrawnAt).getTime() + WITHDRAW_HOLD_DAYS * 24 * 60 * 60 * 1000);
+
+// Instructor requests to teach a course (re-opens a previously rejected/withdrawn request).
 // Returns { request, reSubmitted } so the controller can pick 200 vs 201.
 export const createTeachingRequestService = async ({ instructorId, courseId, message = "" }) => {
   if (!courseId) throw new ApiError(400, "courseId is required");
@@ -15,11 +21,19 @@ export const createTeachingRequestService = async ({ instructorId, courseId, mes
   if (existing) {
     if (existing.status === "pending") throw new ApiError(409, "You already have a pending request for this course");
     if (existing.status === "approved") throw new ApiError(409, "You are already approved to teach this course");
-    // Previously rejected → re-open
+    if (existing.status === "withdrawn" && existing.withdrawnAt) {
+      const holdUntil = holdUntilFrom(existing.withdrawnAt);
+      if (Date.now() < holdUntil.getTime()) {
+        const until = holdUntil.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+        throw new ApiError(403, `You withdrew this request recently. You can apply to teach this course again on ${until}.`);
+      }
+    }
+    // Previously rejected, or withdrawn with the hold elapsed → re-open
     existing.status = "pending";
     existing.message = message;
     existing.reviewedBy = null;
     existing.reviewedAt = null;
+    existing.withdrawnAt = null;
     await existing.save();
     return { request: existing, reSubmitted: true };
   }
@@ -67,6 +81,7 @@ export const getAllTeachingRequestsService = async ({ page = 1, limit = 20, stat
     mode: r.mode,
     createdAt: r.createdAt,
     reviewedAt: r.reviewedAt,
+    withdrawnAt: r.withdrawnAt,
     instructor: usersMap[r.instructorId] || { id: r.instructorId },
     course: r.courseId,
   }));
@@ -88,12 +103,25 @@ export const updateTeachingRequestStatusService = async ({ id, status, reviewerI
   return request;
 };
 
+// Instructors "withdraw" their own request (soft delete + start the re-apply hold);
+// admins hard-delete the record entirely.
 export const deleteTeachingRequestService = async ({ id, user }) => {
   const request = await TeachingRequest.findById(id);
   if (!request) throw new ApiError(404, "Teaching request not found");
 
   if (user.role !== "admin" && request.instructorId !== user.id) {
-    throw new ApiError(403, "You can only cancel your own requests");
+    throw new ApiError(403, "You can only withdraw your own requests");
   }
-  await request.deleteOne();
+
+  if (user.role === "admin") {
+    await request.deleteOne();
+    return { deleted: true };
+  }
+
+  request.status = "withdrawn";
+  request.withdrawnAt = new Date();
+  request.reviewedBy = null;
+  request.reviewedAt = null;
+  await request.save();
+  return { withdrawn: true, holdUntil: holdUntilFrom(request.withdrawnAt) };
 };

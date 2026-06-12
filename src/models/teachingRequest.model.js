@@ -24,7 +24,7 @@ const teachingRequestSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["pending", "approved", "rejected"],
+      enum: ["pending", "approved", "rejected", "withdrawn"],
       default: "pending",
     },
     reviewedBy: {
@@ -32,6 +32,12 @@ const teachingRequestSchema = new mongoose.Schema(
       default: null,
     },
     reviewedAt: {
+      type: Date,
+      default: null,
+    },
+    // When the instructor withdrew their own request. Drives a re-apply hold
+    // (they can't request the same course again until HOLD_DAYS have passed).
+    withdrawnAt: {
       type: Date,
       default: null,
     },

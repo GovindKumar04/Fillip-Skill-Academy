@@ -42,10 +42,11 @@ const updateTeachingRequestStatus = asyncHandler(async (req, res) => {
   return res.json(new ApiResponse(200, request, `Request ${request.status}`));
 });
 
-// DELETE /teaching-requests/:id  (admin, or instructor cancelling their own)
+// DELETE /teaching-requests/:id  (admin removes; instructor withdraws their own)
 const deleteTeachingRequest = asyncHandler(async (req, res) => {
-  await deleteTeachingRequestService({ id: req.params.id, user: req.user });
-  return res.json(new ApiResponse(200, null, "Teaching request removed"));
+  const result = await deleteTeachingRequestService({ id: req.params.id, user: req.user });
+  const message = result.deleted ? "Teaching request removed" : "Teaching request withdrawn";
+  return res.json(new ApiResponse(200, result, message));
 });
 
 export {

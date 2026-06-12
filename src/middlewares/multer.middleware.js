@@ -14,19 +14,15 @@ const storage = multer.diskStorage({
 });
 
 const fileFilter = (req, file, cb) => {
-  const allowed = {
-    "image/jpeg": true,
-    "image/png": true,
-    "image/webp": true,
-    "application/pdf": true,
-    "video/mp4": true,
-    "video/mkv": true,
-    "video/webm": true,
-  };
-  if (allowed[file.mimetype]) {
+  // Prefix-based to match the downstream type detection in material.service.js and
+  // cloudinary.util.js. This accepts any image or video container — e.g. MKV reports
+  // as "video/x-matroska" (NOT "video/mkv"), MOV as "video/quicktime", etc. — plus PDFs.
+  const mime = file.mimetype || "";
+  const ok = mime.startsWith("image/") || mime.startsWith("video/") || mime === "application/pdf";
+  if (ok) {
     cb(null, true);
   } else {
-    cb(new Error(`Unsupported file type: ${file.mimetype}`), false);
+    cb(new Error(`Unsupported file type: ${mime || "unknown"}`), false);
   }
 };
 

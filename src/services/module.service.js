@@ -31,7 +31,19 @@ export const getModulesService = async ({ courseId, user }) => {
   const modules = await Module.find({ course: courseId }).populate("materials").sort("order");
   const plain = modules.map((m) => m.toObject());
   const allowed = await hasOnlineCourseAccess(user, courseId);
-  if (!allowed) stripMaterialUrls(plain);
+  if (!allowed) {
+    stripMaterialUrls(plain);
+  } else {
+    // PDFs can't be delivered from Cloudinary's CDN when PDF delivery is restricted,
+    // so serve them through our authenticated streaming proxy instead. Videos/images
+    // deliver fine from the CDN and keep their direct URLs.
+    for (const mod of plain) {
+      if (!Array.isArray(mod.materials)) continue;
+      for (const mat of mod.materials) {
+        if (mat.type === "pdf") mat.url = `/api/courses/${courseId}/materials/${mat._id}/file`;
+      }
+    }
+  }
   return plain;
 };
 

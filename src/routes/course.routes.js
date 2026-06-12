@@ -17,6 +17,7 @@ import {
 import {
   uploadMaterials,
   deleteMaterial,
+  streamMaterialFile,
 } from "../controllers/material.controller.js";
 import {
   addOrUpdateReview,
@@ -70,6 +71,9 @@ courseRouter.delete(
   verifyJWT, requireRole("admin"),
   deleteMaterial,
 );
+
+// Authenticated streaming proxy for material files (PDFs) — access-checked inside.
+courseRouter.get("/:courseId/materials/:materialId/file", optionalAuth, streamMaterialFile);
 
 // ─── Reviews & Testimonials ───────────────────────────────
 courseRouter.get("/:courseId/reviews", optionalAuth, getReviews);

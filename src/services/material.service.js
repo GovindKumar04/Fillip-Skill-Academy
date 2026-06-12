@@ -2,6 +2,31 @@ import { Module } from "../models/module.model.js";
 import { Material } from "../models/material.model.js";
 import { uploadToCloudinary, deleteFromCloudinary } from "../utils/cloudinary.util.js";
 import { ApiError } from "../utils/ApiError.js";
+import cloudinary from "../config/cloudinary.js";
+import { hasOnlineCourseAccess } from "../utils/courseAccess.js";
+
+// Resolve an authenticated, short-lived Cloudinary download URL for a material the
+// signed-in user is allowed to view. Used by the streaming proxy so PDFs work even
+// when the account's CDN PDF delivery is restricted — the API download endpoint
+// bypasses that restriction (the CDN secure_url returns 401 for PDFs/ZIPs).
+export const getMaterialFileService = async ({ courseId, materialId, user }) => {
+  const allowed = await hasOnlineCourseAccess(user, courseId);
+  if (!allowed) throw new ApiError(403, "You don't have access to this material");
+
+  const material = await Material.findById(materialId).populate({ path: "module", select: "course" });
+  if (!material || String(material.module?.course) !== String(courseId)) {
+    throw new ApiError(404, "Material not found");
+  }
+
+  const resourceType = material.type === "video" ? "video" : material.type === "pdf" ? "raw" : "image";
+  const downloadUrl = cloudinary.utils.private_download_url(material.publicId, null, {
+    resource_type: resourceType,
+    type: "upload",
+  });
+  const contentType = material.type === "pdf" ? "application/pdf" : "application/octet-stream";
+  const safeTitle = (material.title || "material").replace(/[^a-zA-Z0-9._-]+/g, "_");
+  return { downloadUrl, contentType, filename: `${safeTitle}.${material.type === "pdf" ? "pdf" : "bin"}` };
+};
 
 const mimetypeToType = (mimetype) => {
   if (mimetype.startsWith("video/")) return "video";
