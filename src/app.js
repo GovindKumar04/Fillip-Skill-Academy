@@ -39,10 +39,20 @@ app.use(compression());
 
 // Cap request bodies so a single oversized payload can't pin a worker.
 app.use(express.json({ limit: "100kb" }));
+// Allowed browser origins. Local dev origins are always permitted so you can run
+// the frontend on localhost against this (deployed) API; CLIENT_URL adds your
+// production frontend domain(s) — comma-separate to allow more than one.
+const allowedOrigins = [
+  "http://localhost:5173",
+  "http://localhost:5174",
+  ...(process.env.CLIENT_URL ? process.env.CLIENT_URL.split(",").map((s) => s.trim()).filter(Boolean) : []),
+];
 app.use(cors({
-  origin: process.env.NODE_ENV === "production"
-    ? process.env.CLIENT_URL  // set CLIENT_URL in .env for production
-    : ["http://localhost:5173", "http://localhost:5174"],
+  origin: (origin, cb) => {
+    // No Origin header → same-origin or non-browser client (curl, server-to-server): allow.
+    if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
+    return cb(new Error(`Not allowed by CORS: ${origin}`));
+  },
   credentials: true,
 }));
 app.use(cookieParser());
