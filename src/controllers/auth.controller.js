@@ -12,8 +12,11 @@ import {
   updateAvatarService,
   changePasswordService,
   refreshAccessTokenService,
+  requestPasswordResetService,
+  verifyResetCodeService,
+  resetPasswordService,
 } from "../services/auth.service.js";
-import { sendVerificationMail } from "../utils/mail.util.js";
+import { sendVerificationMail, sendPasswordResetMail } from "../utils/mail.util.js";
 import { ApiError } from "../utils/ApiError.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import { cookieOptions } from "../middlewares/cookie.options.js";
@@ -65,6 +68,47 @@ export const resendVerification = asyncHandler(async (req, res) => {
   await sendVerificationMail({ name, email, code });
 
   return res.status(200).json(new ApiResponse(200, {}, "Verification code sent"));
+});
+
+// POST /auth/forgot-password  (public) — email a reset code if the account exists
+export const forgotPassword = asyncHandler(async (req, res) => {
+  const { email } = req.body;
+  if (!email) throw new ApiError(400, "Email is required");
+
+  const result = await requestPasswordResetService({ email });
+  // Only send mail if the account exists, but ALWAYS respond the same way so we
+  // don't reveal which emails are registered.
+  if (result) {
+    try {
+      await sendPasswordResetMail(result);
+    } catch (err) {
+      console.error(`Password reset email failed for ${email}:`, err.message);
+    }
+  }
+
+  return res.status(200).json(
+    new ApiResponse(200, {}, "If an account with that email exists, a reset code has been sent.")
+  );
+});
+
+// POST /auth/verify-reset-code  (public) — soft check before showing the new-password field
+export const verifyResetCode = asyncHandler(async (req, res) => {
+  const { email, code } = req.body;
+  if (!email || !code) throw new ApiError(400, "Email and code are required");
+
+  await verifyResetCodeService({ email, code });
+  return res.status(200).json(new ApiResponse(200, { valid: true }, "Code verified"));
+});
+
+// POST /auth/reset-password  (public) — set a new password using a valid code
+export const resetPassword = asyncHandler(async (req, res) => {
+  const { email, code, newPassword } = req.body;
+  if (!email || !code || !newPassword) {
+    throw new ApiError(400, "Email, code and new password are required");
+  }
+
+  await resetPasswordService({ email, code, newPassword });
+  return res.status(200).json(new ApiResponse(200, {}, "Password reset successfully. Please sign in."));
 });
 
 export const loginUser = asyncHandler(async (req, res) => {

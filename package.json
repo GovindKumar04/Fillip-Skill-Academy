@@ -32,10 +32,11 @@
     "seed:modules": "node src/migration/seedModules.js",
     "migrate:rolls": "node src/migration/addRollNumbers.js",
     "migrate:verify": "node src/migration/addEmailVerification.js",
+    "migrate:reset": "node src/migration/addPasswordReset.js",
     "migrate:indexes": "node src/migration/addPerformanceIndexes.js",
     "migrate:audit": "node src/migration/addAuditLog.js",
     "migrate:tables": "node src/migration/addPaymentsAndAffiliates.js",
-    "migrate": "node src/migration/addPaymentsAndAffiliates.js && node src/migration/addRollNumbers.js && node src/migration/addEmailVerification.js && node src/migration/addPerformanceIndexes.js && node src/migration/addAuditLog.js",
+    "migrate": "node src/migration/addPaymentsAndAffiliates.js && node src/migration/addRollNumbers.js && node src/migration/addEmailVerification.js && node src/migration/addPasswordReset.js && node src/migration/addPerformanceIndexes.js && node src/migration/addAuditLog.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

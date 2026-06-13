@@ -10,9 +10,20 @@ import {
   getUsers,
   changePassword,
   updateAvatar,
+  forgotPassword,
+  verifyResetCode,
+  resetPassword,
 } from "../controllers/auth.controller.js";
 import { validate } from "../middlewares/validate.middleware.js";
-import { registerSchema, loginSchema, verifyEmailSchema, resendVerificationSchema } from "../validations/auth.validation.js";
+import {
+  registerSchema,
+  loginSchema,
+  verifyEmailSchema,
+  resendVerificationSchema,
+  forgotPasswordSchema,
+  verifyResetCodeSchema,
+  resetPasswordSchema,
+} from "../validations/auth.validation.js";
 import { verifyJWT } from "../middlewares/auth.middleware.js";
 import { requireRole } from "../middlewares/role.middleware.js";
 import { upload } from "../middlewares/multer.middleware.js";
@@ -24,6 +35,9 @@ authrouter.post("/register", authLimiter, validate(registerSchema), registerUser
 authrouter.post("/verify-email", authLimiter, validate(verifyEmailSchema), verifyEmail);
 authrouter.post("/resend-verification", authLimiter, validate(resendVerificationSchema), resendVerification);
 authrouter.post("/login", authLimiter, validate(loginSchema), loginUser);
+authrouter.post("/forgot-password", authLimiter, validate(forgotPasswordSchema), forgotPassword);
+authrouter.post("/verify-reset-code", authLimiter, validate(verifyResetCodeSchema), verifyResetCode);
+authrouter.post("/reset-password", authLimiter, validate(resetPasswordSchema), resetPassword);
 authrouter.post("/logout", logoutUser);
 authrouter.post("/refresh", refreshAccessToken);
 authrouter.get("/me", verifyJWT, getCurrentUser);

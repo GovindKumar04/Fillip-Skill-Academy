@@ -170,6 +170,81 @@ export const resendVerificationService = async ({ email }) => {
   return { name: user.full_name, email, code };
 };
 
+// ─── Password reset (6-digit OTP) ─────────────────────────
+// Issues a reset code for an account. Returns { name, email, code } so the
+// controller can email it — or null if no such account exists. Returning null
+// (instead of throwing 404) lets the controller respond generically and avoid
+// leaking which emails are registered (account-enumeration protection).
+export const requestPasswordResetService = async ({ email }) => {
+  const { rows } = await pool.query(
+    `SELECT id, full_name FROM users WHERE email = $1`,
+    [email]
+  );
+  if (rows.length === 0) return null;
+
+  const code = makeCode();
+  const hashed = await bcrypt.hash(code, 10);
+  await pool.query(
+    `UPDATE users
+       SET reset_code = $1,
+           reset_code_expires = NOW() + INTERVAL '${CODE_TTL_MINUTES} minutes',
+           updated_at = NOW()
+     WHERE id = $2`,
+    [hashed, rows[0].id]
+  );
+  return { name: rows[0].full_name, email, code };
+};
+
+// Internal: validate an emailed reset code without consuming it. Returns the
+// user id on success; throws ApiError otherwise. Expiry is evaluated in
+// Postgres (code_valid) to dodge the TIMESTAMP/timezone skew noted above.
+const assertValidResetCode = async ({ email, code }) => {
+  const { rows } = await pool.query(
+    `SELECT id, reset_code,
+            (reset_code_expires IS NOT NULL AND reset_code_expires > NOW()) AS code_valid
+       FROM users WHERE email = $1`,
+    [email]
+  );
+  // Generic error — don't reveal whether the email exists.
+  const fail = () => new ApiError(400, "Invalid or expired reset code");
+  if (rows.length === 0) throw fail();
+
+  const user = rows[0];
+  if (!user.reset_code || !user.code_valid) throw fail();
+
+  const ok = await bcrypt.compare(String(code), user.reset_code);
+  if (!ok) throw fail();
+  return user.id;
+};
+
+// Soft check used by the "enter code" step — confirms the code is good before
+// the UI shows the new-password field. Does NOT consume the code.
+export const verifyResetCodeService = async ({ email, code }) => {
+  await assertValidResetCode({ email, code });
+  return { valid: true };
+};
+
+// Final step: re-validate the code, set the new password, consume the code, and
+// invalidate the refresh token so any existing sessions are logged out.
+export const resetPasswordService = async ({ email, code, newPassword }) => {
+  if (!newPassword || newPassword.length < 6) {
+    throw new ApiError(400, "New password must be at least 6 characters");
+  }
+  const userId = await assertValidResetCode({ email, code });
+
+  const hashed = await bcrypt.hash(newPassword, 10);
+  await pool.query(
+    `UPDATE users
+       SET password = $1,
+           reset_code = NULL,
+           reset_code_expires = NULL,
+           refresh_token = NULL,
+           updated_at = NOW()
+     WHERE id = $2`,
+    [hashed, userId]
+  );
+};
+
 export const loginUserService = async ({ email, password }) => {
   const userResult = await pool.query(
     `

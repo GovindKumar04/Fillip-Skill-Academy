@@ -63,6 +63,35 @@ export const sendVerificationMail = async ({ name, email, code }) => {
   });
 };
 
+// ─── Password reset code (OTP) ────────────────────────────
+// Throws on failure so the caller can tell the user to retry.
+export const sendPasswordResetMail = async ({ name, email, code }) => {
+  await transporter.sendMail({
+    from: `"Fillip Skill Academy" <${process.env.SMTP_USER}>`,
+    to: email,
+    subject: `${code} is your Fillip password reset code`,
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background: #f9fafb; padding: 24px; border-radius: 12px;">
+        <div style="background: #1e3a8a; color: white; padding: 24px; border-radius: 8px; text-align: center; margin-bottom: 24px;">
+          <h1 style="margin: 0; font-size: 22px;">Reset your password</h1>
+          <p style="margin: 8px 0 0; opacity: 0.85;">Fillip Skill Academy</p>
+        </div>
+        <div style="background: white; padding: 24px; border-radius: 8px; border: 1px solid #e5e7eb; text-align: center;">
+          <p style="color: #374151; font-size: 16px;">Hi <strong>${name || "there"}</strong>,</p>
+          <p style="color: #374151;">Use this code to reset your password:</p>
+          <div style="font-size: 34px; font-weight: 800; letter-spacing: 10px; color: #1e3a8a; background: #eff6ff; border-radius: 8px; padding: 16px; margin: 16px auto; display: inline-block;">
+            ${code}
+          </div>
+          <p style="color: #6b7280; font-size: 13px;">This code expires in 15 minutes. If you didn't request a password reset, you can safely ignore this email — your password won't change.</p>
+        </div>
+        <p style="color: #9ca3af; font-size: 12px; text-align: center; margin-top: 16px;">
+          Questions? Contact us at <a href="mailto:${process.env.ADMIN_EMAIL}" style="color: #2563eb;">${process.env.ADMIN_EMAIL}</a>
+        </p>
+      </div>
+    `,
+  });
+};
+
 // ─── Payment confirmation to student ──────────────────────
 export const sendPaymentConfirmation = async ({ name, email, courseName, enrollmentType, amountINR, paymentId }) => {
   try {
